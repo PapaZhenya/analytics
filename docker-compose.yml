@@ -1,3 +1,8 @@
+# Storage: STORAGE_BACKEND in .env selects "local" (default — the audio_storage volume
+# below, mounted into api+worker) or "s3" (production option — real AWS S3, or any
+# S3-compatible endpoint including a local MinIO for testing the s3 code path without
+# real cloud credentials; uncomment a `minio` service here and point
+# STORAGE_S3_ENDPOINT_URL at it if you want to exercise that path locally).
 services:
   postgres:
     image: postgres:16-alpine

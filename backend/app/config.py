@@ -25,8 +25,11 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:8080"]
 
     # Storage
-    storage_backend: str = "local"  # "local" | "s3" (future)
+    storage_backend: str = "local"  # "local" (dev default) | "s3" (production option)
     storage_local_path: str = "./.data/audio"
+    storage_s3_bucket: str | None = None
+    storage_s3_endpoint_url: str | None = None  # set for MinIO/other S3-compatible; leave unset for real AWS S3
+    storage_s3_region: str = "us-east-1"
 
     # Pipeline config paths (existing repo)
     pipeline_config_path: str = "config/config.yaml"
@@ -43,6 +46,9 @@ class Settings(BaseSettings):
 
     # Rate limiting
     login_rate_limit: str = "10/minute"
+
+    # Logging
+    log_level: str = "INFO"
 
     @property
     def celery_broker(self) -> str:

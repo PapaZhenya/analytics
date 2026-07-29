@@ -1,8 +1,8 @@
 """Audio storage abstraction.
 
-Phase 1 ships LocalFilesystemStorage only. STORAGE_BACKEND env var selects the
-implementation so S3/MinIO is a drop-in later without touching any caller —
-routers/calls.py and pipeline/orchestrator.py only ever talk to the AudioStorage interface.
+STORAGE_BACKEND env var selects the implementation ("local" or "s3") so callers never
+know which one is in play — routers/calls.py and pipeline/orchestrator.py only ever
+talk to the AudioStorage interface.
 """
 import hashlib
 import os
@@ -89,6 +89,67 @@ class LocalFilesystemStorage(AudioStorage):
             path.unlink()
 
 
+class S3CompatibleStorage(AudioStorage):
+    """Production storage option. Works against real AWS S3 or any S3-compatible
+    endpoint (MinIO, etc.) via `storage_s3_endpoint_url`.
+
+    `get_path()` still has to return a *local* filesystem path: every existing
+    src/audio/* class (unmodified, per the approved plan) opens its input via
+    librosa/soundfile/ffmpeg subprocess calls, not a byte stream — there's no
+    S3-native way to hand them a file. So this downloads to a local cache once (under
+    the call's own .temp/ working directory, which the orchestrator already cleans up
+    at the end of a run — no extra cleanup path needed) and reuses it if already
+    present, rather than re-downloading on every access.
+    """
+
+    def __init__(self) -> None:
+        import boto3
+
+        settings = get_settings()
+        if not settings.storage_s3_bucket:
+            raise ValueError("STORAGE_S3_BUCKET must be set when STORAGE_BACKEND=s3")
+
+        self.bucket = settings.storage_s3_bucket
+        self._client = boto3.client(
+            "s3",
+            endpoint_url=settings.storage_s3_endpoint_url or None,
+            region_name=settings.storage_s3_region,
+        )
+        self._download_cache_dir = Path(settings.pipeline_temp_dir) / "_s3_cache"
+        self._download_cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def save(self, call_id: str, filename: str, fileobj) -> str:
+        ext = Path(filename).suffix
+        key = f"{call_id}{ext}"
+        fileobj.seek(0)
+        self._client.upload_fileobj(fileobj, self.bucket, key)
+        return key
+
+    def get_path(self, storage_path: str) -> Path:
+        local_path = self._download_cache_dir / storage_path
+        if not local_path.exists():
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            self._client.download_file(self.bucket, storage_path, str(local_path))
+        return local_path
+
+    def stream(self, storage_path: str, start: int = 0, end: int | None = None) -> Iterator[bytes]:
+        # Proxied directly from S3 via an HTTP Range request — no need to pull the
+        # whole object locally just to serve audio playback.
+        range_header = f"bytes={start}-{'' if end is None else end - 1}"
+        response = self._client.get_object(Bucket=self.bucket, Key=storage_path, Range=range_header)
+        yield from response["Body"].iter_chunks(chunk_size=64 * 1024)
+
+    def size(self, storage_path: str) -> int:
+        response = self._client.head_object(Bucket=self.bucket, Key=storage_path)
+        return response["ContentLength"]
+
+    def delete(self, storage_path: str) -> None:
+        self._client.delete_object(Bucket=self.bucket, Key=storage_path)
+        local_path = self._download_cache_dir / storage_path
+        if local_path.exists():
+            local_path.unlink()
+
+
 _storage_instance: AudioStorage | None = None
 
 
@@ -98,6 +159,8 @@ def get_storage() -> AudioStorage:
         settings = get_settings()
         if settings.storage_backend == "local":
             _storage_instance = LocalFilesystemStorage()
+        elif settings.storage_backend == "s3":
+            _storage_instance = S3CompatibleStorage()
         else:
-            raise ValueError(f"Unsupported STORAGE_BACKEND: {settings.storage_backend}")
+            raise ValueError(f"Unsupported STORAGE_BACKEND: {settings.storage_backend!r} (expected 'local' or 's3')")
     return _storage_instance
