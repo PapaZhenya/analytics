@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     pipeline_nemo_config_path: str = "config/nemo/diar_infer_telephonic.yaml"
     pipeline_temp_dir: str = ".temp"
 
+    # LLM provider selection (src/text/model.py::ModelRegistry model_id: "llama" |
+    # "openai" | "azure_openai"). Defaults to "llama" — a locally-run HuggingFace model
+    # (config/config.yaml's models.llama.model_name) — so the default production mode
+    # never silently depends on an external AI API. Set LLM_PROVIDER=openai explicitly
+    # to opt into OpenAI; nothing in this codebase selects it on its own.
+    llm_provider: str = "llama"
+
     # Rate limiting
     login_rate_limit: str = "10/minute"
 

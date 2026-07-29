@@ -35,7 +35,7 @@ class SemanticEvaluator(RuleEvaluator):
         llm = LLMOrchestrator(
             config_path=settings.pipeline_config_path,
             prompt_config_path=settings.pipeline_prompt_path,
-            model_id="openai",
+            model_id=settings.llm_provider,
         )
 
         scoped = context.utterances_for_scope(criterion.speaker_scope.value)
@@ -50,7 +50,9 @@ class SemanticEvaluator(RuleEvaluator):
             {"role": "user", "content": dialogue_text},
         ]
 
-        raw_response = await llm.manager.generate(model_id="openai", messages=messages, max_new_tokens=1000)
+        raw_response = await llm.manager.generate(
+            model_id=settings.llm_provider, messages=messages, max_new_tokens=1000
+        )
 
         parsed = LLMOrchestrator.extract_json(raw_response) if raw_response else None
         if not parsed or "verdict" not in parsed:

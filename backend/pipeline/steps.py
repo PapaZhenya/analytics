@@ -155,7 +155,7 @@ async def step_classify_speaker_roles(ctx: PipelineContext) -> None:
     llm = LLMOrchestrator(
         config_path=settings.pipeline_config_path,
         prompt_config_path=settings.pipeline_prompt_path,
-        model_id="openai",
+        model_id=settings.llm_provider,
     )
     ctx.speaker_roles_raw = await llm.generate("Classification", ctx.sentence_speaker_mapping)
     # LLMResultHandler is left unmodified: its validate_and_fallback()/​_fallback() logic
@@ -175,7 +175,7 @@ async def step_sentiment_analysis(ctx: PipelineContext) -> None:
     llm = LLMOrchestrator(
         config_path=settings.pipeline_config_path,
         prompt_config_path=settings.pipeline_prompt_path,
-        model_id="openai",
+        model_id=settings.llm_provider,
     )
     ctx.sentiment_results = await llm.generate(
         "SentimentAnalysis", user_input=ctx.sentence_speaker_mapping
@@ -188,7 +188,7 @@ async def step_profanity_detection(ctx: PipelineContext) -> None:
     llm = LLMOrchestrator(
         config_path=settings.pipeline_config_path,
         prompt_config_path=settings.pipeline_prompt_path,
-        model_id="openai",
+        model_id=settings.llm_provider,
     )
     ctx.profanity_results = await llm.generate(
         "ProfanityWordDetection", user_input=ctx.sentence_speaker_mapping
@@ -201,7 +201,7 @@ async def step_summary(ctx: PipelineContext) -> None:
     llm = LLMOrchestrator(
         config_path=settings.pipeline_config_path,
         prompt_config_path=settings.pipeline_prompt_path,
-        model_id="openai",
+        model_id=settings.llm_provider,
     )
     ctx.summary_result = await llm.generate("Summary", user_input=ctx.sentence_speaker_mapping)
 
@@ -212,7 +212,7 @@ async def step_conflict_detection(ctx: PipelineContext) -> None:
     llm = LLMOrchestrator(
         config_path=settings.pipeline_config_path,
         prompt_config_path=settings.pipeline_prompt_path,
-        model_id="openai",
+        model_id=settings.llm_provider,
     )
     ctx.conflict_result = await llm.generate(
         "ConflictDetection", user_input=ctx.sentence_speaker_mapping
@@ -229,7 +229,7 @@ async def step_topic_detection(ctx: PipelineContext) -> None:
     llm = LLMOrchestrator(
         config_path=settings.pipeline_config_path,
         prompt_config_path=settings.pipeline_prompt_path,
-        model_id="openai",
+        model_id=settings.llm_provider,
     )
     # Phase 1: no persisted Topic table (superseded by the versioned scorecard/QA-engine
     # design) — pass an empty known-topics list; the LLM proposes a new topic freely.

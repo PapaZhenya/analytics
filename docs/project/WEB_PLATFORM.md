@@ -70,6 +70,56 @@ analytics/
     (Verification item 2 in the approved plan) still needs to happen in a real
     GPU-equipped environment before Phase 1 is considered fully done.
 
+## Local-first / no silently-required external AI API
+
+The user's spec (section 3 of the product requirements) requires that the default
+production mode never depend on an external AI API, with audio/transcripts/QA
+results/feedback capable of staying entirely inside customer infrastructure, and any
+external provider as an explicit opt-in adapter — never a silent default.
+
+**This was a real, already-shipped violation, not just a future design goal**: the
+initial Phase 1 implementation hardcoded `model_id="openai"` in all 6 LLM-driven
+pipeline steps (`backend/pipeline/steps.py`) and in the QA engine's
+`SemanticEvaluator` (`backend/pipeline/qa_engine/semantic_evaluator.py`) — meaning
+every processed call silently sent transcript data to OpenAI regardless of any
+configuration. Fixed by:
+
+- Adding `Settings.llm_provider` (`backend/app/config.py`, env var `LLM_PROVIDER`),
+  **defaulting to `"llama"`** — the existing, already-implemented
+  `src/text/model.py::LLaMAModel`, which runs a HuggingFace `transformers`/`torch` model
+  locally on the worker (`config/config.yaml`'s `models.llama.model_name`, currently
+  `meta-llama/Llama-3.2-3B-Instruct`). No data leaves the deployment at runtime with this
+  default.
+- Every call site that previously hardcoded `model_id="openai"` now reads
+  `settings.llm_provider` instead — `"openai"`/`"azure_openai"` only ever get used if an
+  operator explicitly sets `LLM_PROVIDER` in `.env`.
+- This required **zero changes** to `src/text/model.py`'s `ModelRegistry`/`ModelFactory`
+  pattern — that pluggable-provider design already existed in the original repo; Phase 1
+  just wasn't using it correctly. Same for the audio pipeline: pyannote, MPSENet, Demucs,
+  faster-whisper, NeMo, ctc-forced-aligner, and deepmultilingualpunctuation were already
+  fully local (one-time model-weight downloads, then local inference) and needed no
+  changes at all — they never had a runtime external-API dependency to remove.
+- Remaining caveat, documented rather than silently glossed over: the **default** local
+  model (`meta-llama/Llama-3.2-3B-Instruct`) is gated on HuggingFace and needs a
+  `HUGGINGFACE_TOKEN` to *download* once — a one-time credential for fetching weights,
+  not a runtime API call. A deployment wanting zero external credentials of any kind
+  should swap `models.llama.model_name` in `config/config.yaml` to an ungated model
+  (e.g. a Qwen2.5 or Phi-3.5 instruct checkpoint) — not done here since changing the
+  actual model choice is a quality/behavior decision, not a plumbing fix.
+- Core-vs-optional separation is now explicit in `.env.example`: `LLM_PROVIDER` plus
+  `HUGGINGFACE_TOKEN` are the only credentials needed for the local-only default;
+  `OPENAI_API_KEY`/`AZURE_OPENAI_*` are clearly marked as read only when an operator
+  opts into an external provider.
+
+Section 3's other listed components (STT, diarization, speaker-role assignment,
+embeddings, storage) were already local by construction and needed no change; "local
+semantic analysis"/"local language models" beyond the fix above is exactly what the
+`ModelRegistry`/`ModelFactory` extensibility point already supports (register a new
+local model class, select it via `LLM_PROVIDER`) — no architecture change required to
+add one. Local analytics (Phase 2, not yet built) is already planned in the approved
+architecture plan to be SQL views against the local Postgres instance, not an external
+analytics service.
+
 ## Frontend — verified
 
 - Vite + React + TypeScript SPA implementing every Phase 1 page/component from the plan:
