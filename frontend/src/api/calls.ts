@@ -70,6 +70,8 @@ export interface SpeakerOut {
   // Speaker.role_confidence docstring. null means role assignment hasn't run yet.
   role_confidence: number | null;
   role_manually_corrected: boolean;
+  role_corrected_by: string | null;
+  role_corrected_at: string | null;
 }
 
 export interface UtteranceOut {
@@ -100,12 +102,15 @@ export interface FindingOut {
   criterion_id: string;
   criterion_code: string;
   criterion_text: string;
+  rule_type: string;
   ai_verdict: "pass" | "fail" | "na";
   ai_confidence: number | null;
   ai_explanation: string | null;
+  engine_version: string;
   current_verdict: "pass" | "fail" | "na";
   human_corrected: boolean;
   reviewed_by: string | null;
+  reviewed_at: string | null;
   notes: string | null;
   evidence: EvidenceOut[];
 }
@@ -113,10 +118,31 @@ export interface FindingOut {
 export interface QAEvaluationOut {
   id: string;
   scorecard_id: string;
+  scorecard_version: number;
+  scorecard_name: string;
   overall_score: number | null;
   max_score: number | null;
   status: string;
   findings: FindingOut[];
+}
+
+export interface ReviewActionHistoryItem {
+  id: string;
+  action_type: string;
+  previous_verdict: string | null;
+  new_verdict: string | null;
+  user_id: string;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface UtteranceCorrectionHistoryItem {
+  id: string;
+  corrected_content: string | null;
+  corrected_speaker_id: string | null;
+  corrected_by: string;
+  reason: string | null;
+  created_at: string;
 }
 
 export interface CommentOut {
@@ -137,6 +163,11 @@ export interface CallDetail {
   duration_seconds: number | null;
   uploaded_at: string;
   processed_at: string | null;
+  checksum: string;
+  uploaded_by: string;
+  channel_count: number | null;
+  is_separate_channel_recording: boolean | null;
+  model_versions: Record<string, string>;
   speakers: SpeakerOut[];
   utterances: UtteranceOut[];
   evaluations: QAEvaluationOut[];
@@ -210,6 +241,16 @@ export async function correctSpeakerRole(
     new_role_code: newRoleCode,
     reason,
   });
+}
+
+export async function getUtteranceCorrectionHistory(
+  callId: string,
+  utteranceId: string
+): Promise<UtteranceCorrectionHistoryItem[]> {
+  const response = await apiClient.get<UtteranceCorrectionHistoryItem[]>(
+    `/calls/${callId}/utterances/${utteranceId}/history`
+  );
+  return response.data;
 }
 
 export async function listComments(callId: string): Promise<CommentOut[]> {

@@ -38,3 +38,18 @@ export async function reviewFinding(
   );
   return response.data;
 }
+
+export interface ReviewActionHistoryItem {
+  id: string;
+  action_type: string;
+  previous_verdict: string | null;
+  new_verdict: string | null;
+  user_id: string;
+  notes: string | null;
+  created_at: string;
+}
+
+export async function getFindingHistory(findingId: string): Promise<ReviewActionHistoryItem[]> {
+  const response = await apiClient.get<ReviewActionHistoryItem[]>(`/findings/${findingId}/history`);
+  return response.data;
+}

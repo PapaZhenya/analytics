@@ -160,6 +160,10 @@ class QAEvaluation(Base, UUIDPKMixin, TimestampMixin):
     findings: Mapped[list["QAFinding"]] = relationship(
         back_populates="evaluation", cascade="all, delete-orphan"
     )
+    # lazy="joined": every historical report needs the scorecard's version/name (section
+    # 8: "scorecard version" must stay explainable), so this is always wanted, not an
+    # occasional lookup worth deferring.
+    scorecard: Mapped["Scorecard"] = relationship(lazy="joined")
 
 
 class QAFinding(Base, UUIDPKMixin):

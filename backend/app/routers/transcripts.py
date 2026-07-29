@@ -14,6 +14,7 @@ from backend.app.models.org import AuditLog, User
 from backend.app.schemas.calls import (
     SpeakerRoleCorrectionRequest,
     SpeakerRoleCorrectionResponse,
+    UtteranceCorrectionHistoryItem,
     UtteranceCorrectionRequest,
     UtteranceCorrectionResponse,
 )
@@ -108,4 +109,31 @@ def correct_speaker_role(
 
     return SpeakerRoleCorrectionResponse(
         speaker_id=speaker.id, role_code=body.new_role_code, role_confidence=1.0
+    )
+
+
+@router.get(
+    "/{call_id}/utterances/{utterance_id}/history",
+    response_model=list[UtteranceCorrectionHistoryItem],
+)
+def get_utterance_correction_history(
+    call_id: uuid.UUID,
+    utterance_id: uuid.UUID,
+    user: User = Depends(require_permission("calls.view")),
+    db: Session = Depends(get_db),
+) -> list[UtteranceCorrection]:
+    """Every correction ever applied to this utterance, in order — the original ASR
+    text is never in this list (it's immutable on the Utterance row itself and always
+    visible via GET /calls/{id}); this is purely the append-only revision chain on top
+    of it, so 'transcript revisions' (section 8) are explainable, not just the latest
+    edit."""
+    utterance = db.get(Utterance, utterance_id)
+    if utterance is None or utterance.call_id != call_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Utterance not found")
+
+    return (
+        db.query(UtteranceCorrection)
+        .filter(UtteranceCorrection.utterance_id == utterance_id)
+        .order_by(UtteranceCorrection.created_at)
+        .all()
     )

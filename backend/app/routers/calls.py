@@ -121,6 +121,8 @@ def get_call_detail(
             display_name=s.display_name,
             role_confidence=float(s.role_confidence) if s.role_confidence is not None else None,
             role_manually_corrected=s.role_corrected_by is not None,
+            role_corrected_by=s.role_corrected_by,
+            role_corrected_at=s.role_corrected_at,
         )
         for s in call.speakers
     ]
@@ -157,12 +159,15 @@ def get_call_detail(
                     criterion_id=f.criterion_id,
                     criterion_code=f.criterion.code,
                     criterion_text=f.criterion.text,
+                    rule_type=f.criterion.rule_type.value,
                     ai_verdict=f.ai_verdict.value,
                     ai_confidence=float(f.ai_confidence) if f.ai_confidence is not None else None,
                     ai_explanation=f.ai_explanation,
+                    engine_version=f.engine_version,
                     current_verdict=f.current_verdict.value,
                     human_corrected=f.human_corrected,
                     reviewed_by=f.reviewed_by,
+                    reviewed_at=f.reviewed_at,
                     notes=f.notes,
                     evidence=[
                         EvidenceOut(
@@ -177,6 +182,8 @@ def get_call_detail(
         evaluations_out.append(
             QAEvaluationOut(
                 id=ev.id, scorecard_id=ev.scorecard_id,
+                scorecard_version=ev.scorecard.version,
+                scorecard_name=ev.scorecard.name,
                 overall_score=float(ev.overall_score) if ev.overall_score is not None else None,
                 max_score=float(ev.max_score) if ev.max_score is not None else None,
                 status=ev.status.value, findings=findings_out,
@@ -197,6 +204,11 @@ def get_call_detail(
         duration_seconds=float(call.duration_seconds) if call.duration_seconds is not None else None,
         uploaded_at=call.uploaded_at,
         processed_at=call.processed_at,
+        checksum=call.checksum,
+        uploaded_by=call.uploaded_by,
+        channel_count=call.channel_count,
+        is_separate_channel_recording=call.is_separate_channel_recording,
+        model_versions=call.model_versions,
         speakers=speakers_out,
         utterances=utterances_out,
         evaluations=evaluations_out,

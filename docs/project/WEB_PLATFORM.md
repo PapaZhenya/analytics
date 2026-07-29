@@ -72,7 +72,7 @@ that satisfies the requirements, not the most scalable one in the abstract.
   crash/restart resumability (JSON checkpoint per call + per-step DB status, so a killed
   worker resumes from the last succeeded step instead of reprocessing from scratch), and
   never deletes the original recording (only `.temp/` working files).
-- **Tests** (`backend/tests/`, pytest): **26 tests total.**
+- **Tests** (`backend/tests/`, pytest): **28 tests total.**
   - **19 run and pass right now** without any external services: password/JWT
     round-trips (`test_security.py`), the QA engine's keyword evaluator + schema
     rejection of malformed verdicts/out-of-range confidence (`test_qa_engine.py`), the
@@ -80,16 +80,17 @@ that satisfies the requirements, not the most scalable one in the abstract.
     LLM output — malformed sentiment/profanity/summary/conflict/topic items are dropped
     with a logged reason rather than crashing or being trusted as-is
     (`test_llm_schemas.py`).
-  - **7 require a real PostgreSQL instance** (native UUID/JSONB/ENUM types used
+  - **9 require a real PostgreSQL instance** (native UUID/JSONB/ENUM types used
     throughout the schema aren't reproducible on SQLite): login/RBAC
     (`test_auth_and_permissions.py`), upload checksum-dedup
     (`test_upload_dedup.py`), orchestrator crash-resumability
-    (`test_idempotency.py`), and QA-evaluation retry idempotency
-    (`test_qa_evaluation_idempotency.py`). These are correctly collected and **skip
-    cleanly** (not fail) without `TEST_DATABASE_URL` set — this sandbox has no
-    Postgres/Docker available to run them against. Set `TEST_DATABASE_URL` to a
-    disposable Postgres DB (e.g. the docker-compose `postgres` service) to run the
-    full 26.
+    (`test_idempotency.py`), QA-evaluation retry idempotency
+    (`test_qa_evaluation_idempotency.py`), and the two explainability-history endpoints
+    end to end through the actual API (`test_explainability_history.py`). These are
+    correctly collected and **skip cleanly** (not fail) without `TEST_DATABASE_URL`
+    set — this sandbox has no Postgres/Docker available to run them against. Set
+    `TEST_DATABASE_URL` to a disposable Postgres DB (e.g. the docker-compose
+    `postgres` service) to run the full 28.
   - **Not run in this sandbox at all**: an actual pipeline run against a real audio file
     needs the full ML stack (torch, nemo_toolkit, faster-whisper, demucs, pyannote.audio,
     ctc-forced-aligner, MPSENet — multi-GB, GPU-oriented). The orchestrator/steps code was
@@ -180,6 +181,55 @@ analytics service.
 3. **A real pipeline run** against one of `.data/example/*.mp3` through the actual worker
    container (GPU-equipped), confirming the full call → transcript → QA finding → review
    loop end to end.
+
+## Data integrity & auditability (section 8 of the product spec)
+
+Section 8 lists what must be preserved (file identity, source metadata, processing
+history, model versions, scorecard version, automatic vs. human-corrected results,
+reviewer identity/timestamps, transcript revisions, audit events) and — separately —
+what a manager must be able to *determine* from a historical report (why a call got a
+score, which rule produced it, which evidence, which model/engine version, whether and
+who changed it, when). Auditing against this found the data was already **stored** for
+nearly everything, but not all of it was actually **reachable through the API** — which
+is what "explainable" requires; a fact sitting in a column nobody's endpoint returns
+isn't explainable to a manager using the product.
+
+Fixed:
+
+- `CallDetailResponse` now includes `checksum`, `uploaded_by`, `channel_count`,
+  `is_separate_channel_recording`, and `model_versions` — all were already columns on
+  `Call` (added during the section 5 audio-pipeline work) but never reached this
+  response until now.
+- `FindingOut` now includes `rule_type` and `engine_version` (which rule/engine version
+  produced this specific result — previously only inferable by cross-referencing
+  `Call.model_versions` and guessing) and `reviewed_at`.
+- `QAEvaluationOut` now includes `scorecard_version`/`scorecard_name` (via a new
+  `QAEvaluation.scorecard` relationship) — a historical report must show which
+  scorecard *version* it was scored against, not the current state of a scorecard that
+  may have since been re-versioned.
+- `SpeakerOut` now includes `role_corrected_by`/`role_corrected_at` — previously only a
+  boolean `role_manually_corrected` was exposed, answering *that* it was corrected but
+  not *who* or *when*.
+- **New:** `GET /findings/{id}/history` — every `ReviewAction` ever taken on a finding,
+  in order (action type, previous → new verdict, reviewer, timestamp, notes). Full
+  history, not just the finding's current state.
+- **New:** `GET /calls/{id}/utterances/{id}/history` — every `UtteranceCorrection` ever
+  applied to an utterance, in order. The original ASR text is never in this list — it's
+  immutable on the `Utterance` row itself and always visible via `GET /calls/{id}` — this
+  is purely the revision chain layered on top of it.
+- Frontend: a collapsible "Call details & processing metadata" panel
+  (`CallInfoPanel.tsx`) surfaces checksum/channels/model-versions; `FindingCard` shows
+  rule type + engine version inline and a "Who changed this, and when?" toggle that
+  fetches and renders the full review history; `QAScorePanel` shows the scorecard name
+  and version.
+
+Everything else on the section 8 checklist was already correctly modeled and confirmed
+by direct inspection: `Scorecard.group_id`/`version` with a hard immutability
+convention once published (and, in Phase 1, there is literally no API endpoint that
+could mutate a published scorecard's criteria — the admin scorecard-editor UI is
+Phase 2, so the convention can't yet be violated via the API even without an explicit
+runtime guard); `UtteranceCorrection` and `ReviewAction` as append-only logs;
+`AuditLog` for account/role-level events (login, speaker-role correction).
 
 ## Engineering quality audit (section 6 of the product spec)
 

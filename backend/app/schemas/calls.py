@@ -53,6 +53,10 @@ class SpeakerOut(BaseModel):
     display_name: str | None
     role_confidence: float | None
     role_manually_corrected: bool
+    # "who changed it and when" (section 8 requirement) — not just *that* it was
+    # corrected, which is all role_manually_corrected communicates.
+    role_corrected_by: uuid.UUID | None
+    role_corrected_at: datetime | None
 
     model_config = {"from_attributes": True}
 
@@ -89,12 +93,17 @@ class FindingOut(BaseModel):
     criterion_id: uuid.UUID
     criterion_code: str
     criterion_text: str
+    # "which rule produced the result" (section 8) — the criterion text alone doesn't
+    # say whether it was a deterministic keyword match or an LLM judgment call.
+    rule_type: str
     ai_verdict: str
     ai_confidence: float | None
     ai_explanation: str | None
+    engine_version: str
     current_verdict: str
     human_corrected: bool
     reviewed_by: uuid.UUID | None
+    reviewed_at: datetime | None
     notes: str | None
     evidence: list[EvidenceOut]
 
@@ -104,6 +113,12 @@ class FindingOut(BaseModel):
 class QAEvaluationOut(BaseModel):
     id: uuid.UUID
     scorecard_id: uuid.UUID
+    # Scorecard.version, not just the opaque row id — "scorecard version" is one of the
+    # things section 8 requires stays explainable on a historical report; a manager
+    # reading an old report needs to know it was v2, not whatever the scorecard looks
+    # like today.
+    scorecard_version: int
+    scorecard_name: str
     overall_score: float | None
     max_score: float | None
     status: str
@@ -132,6 +147,15 @@ class CallDetailResponse(BaseModel):
     duration_seconds: float | None
     uploaded_at: datetime
     processed_at: datetime | None
+    # Section 8 requires "uploaded file identity" / "source metadata" / "model
+    # versions" / channel layout stay preserved AND explainable — these were already
+    # stored on Call (checksum since Phase 1, model_versions/channel_* since the
+    # audio-pipeline work) but never actually reached this response until now.
+    checksum: str
+    uploaded_by: uuid.UUID
+    channel_count: int | None
+    is_separate_channel_recording: bool | None
+    model_versions: dict[str, str]
     speakers: list[SpeakerOut]
     utterances: list[UtteranceOut]
     evaluations: list[QAEvaluationOut]
@@ -161,3 +185,16 @@ class SpeakerRoleCorrectionResponse(BaseModel):
     speaker_id: uuid.UUID
     role_code: str
     role_confidence: float
+
+
+class UtteranceCorrectionHistoryItem(BaseModel):
+    """One entry in an utterance's append-only correction history — section 8 requires
+    'transcript revisions' stay preserved and explainable, not just the current text."""
+    id: uuid.UUID
+    corrected_content: str | None
+    corrected_speaker_id: uuid.UUID | None
+    corrected_by: uuid.UUID
+    reason: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

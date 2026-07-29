@@ -8,10 +8,12 @@ const speakers: SpeakerOut[] = [
   {
     id: "s1", diarization_label: "Speaker 0", role_code: "agent", display_name: "Agent",
     role_confidence: 0.85, role_manually_corrected: false,
+    role_corrected_by: null, role_corrected_at: null,
   },
   {
     id: "s2", diarization_label: "Speaker 1", role_code: "client", display_name: "Client",
     role_confidence: 0.85, role_manually_corrected: false,
+    role_corrected_by: null, role_corrected_at: null,
   },
 ];
 

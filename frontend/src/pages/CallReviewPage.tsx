@@ -8,6 +8,7 @@ import { QAScorePanel } from "@/components/QAScorePanel";
 import { FindingCard } from "@/components/FindingCard";
 import { CommentThread } from "@/components/CommentThread";
 import { CallStatusBadge } from "@/components/CallStatusBadge";
+import { CallInfoPanel } from "@/components/CallInfoPanel";
 
 export function CallReviewPage() {
   const { callId } = useParams<{ callId: string }>();
@@ -58,6 +59,8 @@ export function CallReviewPage() {
           {statusData?.steps.find((s) => s.status === "failed")?.error_message}
         </div>
       )}
+
+      <CallInfoPanel call={call} />
 
       {call.utterances.length > 0 && (
         <AudioPlayer ref={audioPlayerRef} src={callAudioUrl(call.id)} onTimeUpdate={setCurrentTime} />

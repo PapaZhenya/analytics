@@ -8,7 +8,11 @@ from backend.app.db.session import get_db
 from backend.app.dependencies import require_permission
 from backend.app.models.org import User
 from backend.app.models.qa import QAFinding, QAFindingEvidence, ReviewAction
-from backend.app.schemas.findings import ReviewActionRequest, ReviewActionResponse
+from backend.app.schemas.findings import (
+    ReviewActionHistoryItem,
+    ReviewActionRequest,
+    ReviewActionResponse,
+)
 
 router = APIRouter(prefix="/findings", tags=["findings"])
 
@@ -106,4 +110,23 @@ def review_finding(
         finding_id=finding.id,
         current_verdict=finding.current_verdict.value,
         human_corrected=finding.human_corrected,
+    )
+
+
+@router.get("/{finding_id}/history", response_model=list[ReviewActionHistoryItem])
+def get_finding_history(
+    finding_id: uuid.UUID,
+    user: User = Depends(require_permission("calls.view")),
+    db: Session = Depends(get_db),
+) -> list[ReviewAction]:
+    """Full review-action history for a finding — every confirm/reject/correct/reopen
+    ever performed, in order, each with who did it and when. Answers 'a manager must be
+    able to determine ... whether a person changed it, who changed it and when' for the
+    complete history, not just the finding's current state."""
+    _get_finding_or_404(db, finding_id)
+    return (
+        db.query(ReviewAction)
+        .filter(ReviewAction.finding_id == finding_id)
+        .order_by(ReviewAction.created_at)
+        .all()
     )
