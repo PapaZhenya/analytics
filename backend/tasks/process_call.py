@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 
 import redis
+from celery.exceptions import SoftTimeLimitExceeded
 
 from backend.app.config import get_settings
 from backend.app.db.session import SessionLocal
@@ -55,6 +56,34 @@ def process_call(self, call_id: str) -> None:
 
         try:
             asyncio.run(run_pipeline(call_id))
+        except SoftTimeLimitExceeded:
+            # Long calls are an explicit design requirement, not a bug — but a call that
+            # blows through pipeline_task_soft_time_limit_seconds (config.py) is failed
+            # immediately with a clear reason rather than retried: retrying something
+            # that's inherently too slow just times out again, burning up to
+            # max_retries × the time limit before giving up either way.
+            db = SessionLocal()
+            try:
+                call = db.get(Call, uuid.UUID(call_id))
+                job = (
+                    db.query(ProcessingJob)
+                    .filter(ProcessingJob.call_id == uuid.UUID(call_id))
+                    .order_by(ProcessingJob.created_at.desc())
+                    .first()
+                )
+                if job is not None:
+                    job.status = "failed"
+                    job.last_error = (
+                        f"Processing exceeded the {settings.pipeline_task_soft_time_limit_seconds}s "
+                        "soft time limit."
+                    )
+                if call is not None:
+                    call.status = CallStatus.failed
+                    call.processed_at = datetime.now(timezone.utc)
+                db.commit()
+            finally:
+                db.close()
+            return
         except Exception as exc:  # noqa: BLE001 — must record failure before deciding retry
             db = SessionLocal()
             try:

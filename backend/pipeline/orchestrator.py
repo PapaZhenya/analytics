@@ -45,6 +45,10 @@ _SPECIAL_STEPS = {"qa_evaluation", "persist_results"}
 _LEGACY_ROLE_TO_CODE = {"Customer": "client", "CSR": "agent"}
 
 _JSON_CHECKPOINT_FIELDS = [
+    "channel_count",
+    "is_separate_channel_recording",
+    "model_versions",
+    "role_assignment_used_fallback",
     "enhanced_audio_path",
     "vocal_audio_path",
     "mono_audio_path",
@@ -173,6 +177,12 @@ def _persist_results(ctx: PipelineContext) -> None:
     role_rows = {r.code: r for r in db.query(SpeakerRole).all()}
     speaker_by_label: dict[str, Speaker] = {}
 
+    # Heuristic confidence tier (NOT a calibrated probability — see
+    # Speaker.role_confidence's docstring): high when the LLM classification validated
+    # cleanly, low when it fell back to "first speaker = CSR". Deliberately not 1.0/0.0
+    # so nothing downstream mistakes either tier for certainty.
+    role_confidence = 0.3 if ctx.role_assignment_used_fallback else 0.85
+
     for item in ssm:
         legacy_label = item["speaker"]  # "Customer" / "CSR" (unmodified LLMResultHandler output)
         role_code = _LEGACY_ROLE_TO_CODE.get(legacy_label, "unknown")
@@ -183,6 +193,7 @@ def _persist_results(ctx: PipelineContext) -> None:
                 diarization_label=legacy_label,
                 role_id=role_rows[role_code].id,
                 display_name=legacy_label,
+                role_confidence=role_confidence,
             )
             db.add(speaker)
             db.flush()

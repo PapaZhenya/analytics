@@ -22,6 +22,85 @@ class NoDialogueDetectedError(Exception):
     clear failure reason rather than silently stopping."""
 
 
+class FileValidationError(Exception):
+    """Raised when the uploaded file isn't decodable audio — caught early (stage 1 of
+    the required pipeline decomposition) so a corrupted/mislabeled file fails with a
+    clear message here instead of a confusing crash deep inside ffprobe/librosa later."""
+
+
+# Below this, a stereo recording is treated as two independent per-speaker channels
+# (agent/client each on their own track) rather than a single mixed-down source — a
+# very common telephony recording format, and a much more reliable speaker split than
+# statistical diarization when it's actually how the file was recorded. This is a
+# heuristic threshold (Pearson correlation between channels over a sample window), not
+# a certainty — see Call.is_separate_channel_recording's docstring. NOTE: detection is
+# implemented and recorded on the Call row now; the pipeline does not yet branch its
+# processing path on this signal (diarization still always runs on the mono-folded
+# mix) — see docs/project/AUDIO_PIPELINE.md for why that's a documented follow-up
+# rather than done in this pass.
+_SEPARATE_CHANNEL_CORRELATION_THRESHOLD = 0.6
+_CHANNEL_INSPECTION_SAMPLE_SECONDS = 60
+
+
+async def step_file_validation(ctx: PipelineContext) -> None:
+    """Stage 1: confirm the uploaded file is genuinely decodable audio with a sane
+    duration before anything else touches it. Extension checking already happens at
+    upload time (backend/app/services/call_service.py) — this is the real content
+    check that catches a corrupted file or one that was mislabeled with an audio
+    extension."""
+    import soundfile as sf
+
+    try:
+        info = sf.info(ctx.original_audio_path)
+    except Exception as exc:  # noqa: BLE001 — any decode failure means "not valid audio"
+        raise FileValidationError(
+            f"File is not readable as audio ({type(exc).__name__}: {exc})."
+        ) from None
+
+    if info.frames <= 0 or info.samplerate <= 0:
+        raise FileValidationError("Audio file contains no samples.")
+
+    duration_seconds = info.frames / info.samplerate
+    if duration_seconds < 0.5:
+        raise FileValidationError(
+            f"Audio is too short to contain a call ({duration_seconds:.2f}s)."
+        )
+
+    ctx.call.duration_seconds = duration_seconds
+
+
+async def step_channel_inspection(ctx: PipelineContext) -> None:
+    """Stage 4: record channel layout before anything folds the audio to mono. Reads
+    only a bounded sample window (not the whole file) so this stays cheap even for long
+    calls."""
+    import numpy as np
+    import soundfile as sf
+
+    info = sf.info(ctx.original_audio_path)
+    ctx.channel_count = info.channels
+    ctx.call.channel_count = info.channels
+
+    if info.channels < 2:
+        ctx.is_separate_channel_recording = False
+        ctx.call.is_separate_channel_recording = False
+        return
+
+    sample_frames = min(info.frames, int(_CHANNEL_INSPECTION_SAMPLE_SECONDS * info.samplerate))
+    data, _ = sf.read(ctx.original_audio_path, frames=sample_frames, dtype="float32", always_2d=True)
+
+    left, right = data[:, 0], data[:, 1]
+    if np.std(left) == 0 or np.std(right) == 0:
+        # One channel is silent/constant — correlation is undefined; treat as
+        # "not confidently a separate-channel recording" rather than guessing.
+        is_separate = False
+    else:
+        correlation = float(np.corrcoef(left, right)[0, 1])
+        is_separate = correlation < _SEPARATE_CHANNEL_CORRELATION_THRESHOLD
+
+    ctx.is_separate_channel_recording = is_separate
+    ctx.call.is_separate_channel_recording = is_separate
+
+
 async def step_dialogue_detection(ctx: PipelineContext) -> None:
     from src.audio.error import DialogueDetecting
 
@@ -43,6 +122,8 @@ async def step_speech_enhancement(ctx: PipelineContext) -> None:
         output_path=os.path.join(ctx.temp_dir, "enhanced.wav"),
         noise_threshold=0.0001,
     )
+    ctx.model_versions["speech_enhancement"] = enhancer.model_name
+    ctx.call.model_versions = dict(ctx.model_versions)
 
 
 async def step_vocal_separation(ctx: PipelineContext) -> None:
@@ -54,17 +135,24 @@ async def step_vocal_separation(ctx: PipelineContext) -> None:
     ) or ctx.enhanced_audio_path
 
 
+_WHISPER_MODEL_NAME = "large-v3"
+
+
 async def step_transcription(ctx: PipelineContext) -> None:
     from src.audio.processing import Transcriber
 
     pipeline_config = OmegaConf.load(settings.pipeline_config_path)
     transcriber = Transcriber(
-        device=pipeline_config.runtime.device, compute_type=pipeline_config.runtime.compute_type
+        model_name=_WHISPER_MODEL_NAME,
+        device=pipeline_config.runtime.device,
+        compute_type=pipeline_config.runtime.compute_type,
     )
     transcript, info = transcriber.transcribe(audio_path=ctx.vocal_audio_path)
     ctx.transcript = transcript
     ctx.detected_language = info["language"]
     ctx.call.detected_language = ctx.detected_language
+    ctx.model_versions["whisper"] = _WHISPER_MODEL_NAME
+    ctx.call.model_versions = dict(ctx.model_versions)
 
 
 async def step_forced_alignment(ctx: PipelineContext) -> None:
@@ -75,6 +163,11 @@ async def step_forced_alignment(ctx: PipelineContext) -> None:
     ctx.word_timestamps = aligner.align(
         audio_path=ctx.vocal_audio_path, transcript=ctx.transcript, language=ctx.detected_language
     )
+    # ctc_forced_aligner doesn't expose a configurable/queryable model name (it loads
+    # its own default internally) — recorded as a fixed label so at least *that* a
+    # forced-alignment pass happened is auditable, even without a specific version string.
+    ctx.model_versions["alignment"] = "ctc_forced_aligner_default"
+    ctx.call.model_versions = dict(ctx.model_versions)
 
 
 async def step_diarization(ctx: PipelineContext) -> None:
@@ -94,6 +187,15 @@ async def step_diarization(ctx: PipelineContext) -> None:
     NeuralDiarizer(cfg=diarizer_cfg).diarize()
 
     ctx.rttm_path = os.path.join(ctx.temp_dir, "pred_rttms", "mono_file.rttm")
+    ctx.model_versions["diarization"] = str(diarizer_cfg.diarizer.msdd_model.model_path)
+    ctx.call.model_versions = dict(ctx.model_versions)
+
+    # KNOWN LIMITATION (documented, not silently glossed over — see
+    # docs/project/AUDIO_PIPELINE.md "Overlapping speech"): diar_infer_telephonic.yaml
+    # sets diarizer.ignore_overlap=True, so overlapping speech is assigned to a single
+    # speaker rather than flagged. Not changed here — the downstream WordSpeakerMapper
+    # (unmodified, per the approved plan) assumes one speaker per time span and would
+    # need its own rework to consume multi-speaker overlap regions correctly.
 
 
 async def step_speaker_timestamps(ctx: PipelineContext) -> None:
@@ -149,6 +251,27 @@ async def step_export_transcript(ctx: PipelineContext) -> None:
     )
 
 
+def _classification_result_is_valid(llm_result, known_speakers: set[str]) -> bool:
+    """Independently re-derives LLMResultHandler.validate_and_fallback()'s own validity
+    check (src/text/llm.py, unmodified) — same criteria, read-only, so we can tell
+    *after the fact* whether the real classification was used or it silently fell back,
+    without needing that private method to report it itself. This is what
+    Speaker.role_confidence is actually derived from (see that field's docstring)."""
+    import re
+
+    if not isinstance(llm_result, dict):
+        return False
+    if "Customer" not in llm_result or "CSR" not in llm_result:
+        return False
+    customer_speaker, csr_speaker = llm_result["Customer"], llm_result["CSR"]
+    pattern = r"^Speaker\s+\d+$"
+    if not (isinstance(customer_speaker, str) and re.match(pattern, customer_speaker)):
+        return False
+    if not (isinstance(csr_speaker, str) and re.match(pattern, csr_speaker)):
+        return False
+    return customer_speaker in known_speakers and csr_speaker in known_speakers
+
+
 async def step_classify_speaker_roles(ctx: PipelineContext) -> None:
     from src.text.llm import LLMOrchestrator, LLMResultHandler
 
@@ -158,6 +281,12 @@ async def step_classify_speaker_roles(ctx: PipelineContext) -> None:
         model_id=settings.llm_provider,
     )
     ctx.speaker_roles_raw = await llm.generate("Classification", ctx.sentence_speaker_mapping)
+
+    known_speakers = {item["speaker"] for item in ctx.sentence_speaker_mapping}
+    ctx.role_assignment_used_fallback = not _classification_result_is_valid(
+        ctx.speaker_roles_raw, known_speakers
+    )
+
     # LLMResultHandler is left unmodified: its validate_and_fallback()/​_fallback() logic
     # hardcodes the "Customer"/"CSR" literal keys/labels. Rather than edit that class (or
     # the Classification prompt contract it depends on), those two labels are treated as
@@ -167,6 +296,9 @@ async def step_classify_speaker_roles(ctx: PipelineContext) -> None:
     ctx.sentence_speaker_mapping = LLMResultHandler().validate_and_fallback(
         ctx.speaker_roles_raw, ctx.sentence_speaker_mapping
     )
+
+    ctx.model_versions["llm_provider"] = settings.llm_provider
+    ctx.call.model_versions = dict(ctx.model_versions)
 
 
 async def step_sentiment_analysis(ctx: PipelineContext) -> None:

@@ -18,6 +18,8 @@ celery_app.conf.update(
     task_reject_on_worker_lost=True,
     task_default_queue=settings.celery_gpu_queue,
     task_track_started=True,
+    task_soft_time_limit=settings.pipeline_task_soft_time_limit_seconds,
+    task_time_limit=settings.pipeline_task_time_limit_seconds,
     # Celery hijacks the root logger by default (its own setup_logging signal handler)
     # — disabled so configure_logging()'s JSON formatter below is what actually ends up
     # emitting worker log lines, same structured format as the api process.

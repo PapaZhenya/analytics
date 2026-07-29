@@ -66,6 +66,10 @@ export interface SpeakerOut {
   diarization_label: string;
   role_code: string;
   display_name: string | null;
+  // Heuristic confidence tier, not a calibrated probability — see the backend's
+  // Speaker.role_confidence docstring. null means role assignment hasn't run yet.
+  role_confidence: number | null;
+  role_manually_corrected: boolean;
 }
 
 export interface UtteranceOut {
@@ -194,6 +198,18 @@ export async function correctUtterance(
   body: { corrected_content?: string; corrected_speaker_id?: string; reason?: string }
 ): Promise<void> {
   await apiClient.post(`/calls/${callId}/utterances/${utteranceId}/correct`, body);
+}
+
+export async function correctSpeakerRole(
+  callId: string,
+  speakerId: string,
+  newRoleCode: string,
+  reason?: string
+): Promise<void> {
+  await apiClient.post(`/calls/${callId}/speakers/${speakerId}/correct-role`, {
+    new_role_code: newRoleCode,
+    reason,
+  });
 }
 
 export async function listComments(callId: string): Promise<CommentOut[]> {

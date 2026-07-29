@@ -72,10 +72,11 @@ that satisfies the requirements, not the most scalable one in the abstract.
   crash/restart resumability (JSON checkpoint per call + per-step DB status, so a killed
   worker resumes from the last succeeded step instead of reprocessing from scratch), and
   never deletes the original recording (only `.temp/` working files).
-- **Tests** (`backend/tests/`, pytest): **16 tests total.**
-  - **10 run and pass right now** without any external services: password/JWT
-    round-trips (`test_security.py`), and the QA engine's keyword evaluator + schema
-    rejection of malformed verdicts/out-of-range confidence (`test_qa_engine.py`).
+- **Tests** (`backend/tests/`, pytest): **20 tests total.**
+  - **14 run and pass right now** without any external services: password/JWT
+    round-trips (`test_security.py`), the QA engine's keyword evaluator + schema
+    rejection of malformed verdicts/out-of-range confidence (`test_qa_engine.py`), and
+    the structured-logging JSON formatter (`test_logging_config.py`).
   - **6 require a real PostgreSQL instance** (native UUID/JSONB/ENUM types used
     throughout the schema aren't reproducible on SQLite): login/RBAC
     (`test_auth_and_permissions.py`), upload checksum-dedup
@@ -83,7 +84,7 @@ that satisfies the requirements, not the most scalable one in the abstract.
     (`test_idempotency.py`). These are correctly collected and **skip cleanly** (not
     fail) without `TEST_DATABASE_URL` set — this sandbox has no Postgres/Docker
     available to run them against. Set `TEST_DATABASE_URL` to a disposable Postgres DB
-    (e.g. the docker-compose `postgres` service) to run the full 16.
+    (e.g. the docker-compose `postgres` service) to run the full 20.
   - **Not run in this sandbox at all**: an actual pipeline run against a real audio file
     needs the full ML stack (torch, nemo_toolkit, faster-whisper, demucs, pyannote.audio,
     ctc-forced-aligner, MPSENet — multi-GB, GPU-oriented). The orchestrator/steps code was

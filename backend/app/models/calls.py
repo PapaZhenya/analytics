@@ -90,6 +90,19 @@ class Call(Base, UUIDPKMixin):
     file_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     detected_language: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
+    # Set by the channel_inspection pipeline step. is_separate_channel_recording is a
+    # heuristic (left/right sample correlation below a threshold — see
+    # backend/pipeline/steps.py::step_channel_inspection), not a certainty: NULL means
+    # "not yet inspected" (e.g. call still queued), never silently defaulted to False.
+    channel_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_separate_channel_recording: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    # Which model/version processed this specific call — populated incrementally as
+    # pipeline steps run (see backend/pipeline/context.py::PipelineContext.model_versions).
+    # Without this, "was this call transcribed with whisper large-v3 or a later model we
+    # upgraded to?" is unanswerable after the fact.
+    model_versions: Mapped[dict] = mapped_column(JSONB, default=dict)
+
     status: Mapped[CallStatus] = mapped_column(
         pg_enum(CallStatus, "call_status"), default=CallStatus.uploaded, nullable=False
     )
@@ -167,6 +180,17 @@ class Speaker(Base, UUIDPKMixin):
     diarization_label: Mapped[str] = mapped_column(String(50), nullable=False)
     role_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("speaker_roles.id"), nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Heuristic confidence tier for the Agent/Client role assignment (NOT a calibrated
+    # probability — see backend/pipeline/steps.py::step_classify_speaker_roles for how
+    # it's derived: high when the LLM classification result validated cleanly, low when
+    # LLMResultHandler had to fall back to its first-speaker-is-CSR heuristic). NULL
+    # means role assignment hasn't run yet. Exists specifically so the review UI can
+    # flag "this role assignment is uncertain" rather than silently presenting a guess
+    # as fact — see the product requirement: never claim perfect speaker identification.
+    role_confidence: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    role_corrected_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    role_corrected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     call: Mapped["Call"] = relationship(back_populates="speakers")
     role: Mapped["SpeakerRole"] = relationship(lazy="joined")

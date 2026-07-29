@@ -1,7 +1,10 @@
 import { useMemo, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SpeakerOut, UtteranceOut } from "@/api/calls";
+import { correctSpeakerRole } from "@/api/calls";
 
 interface TranscriptPanelProps {
+  callId: string;
   utterances: UtteranceOut[];
   speakers: SpeakerOut[];
   currentTime: number;
@@ -9,6 +12,12 @@ interface TranscriptPanelProps {
 }
 
 const SPEAKER_COLORS = ["#3b82f6", "#f97316", "#10b981", "#a855f7", "#ef4444", "#eab308"];
+const ROLE_OPTIONS = ["agent", "client", "other", "unknown"];
+
+// Not a calibrated probability — see the backend's Speaker.role_confidence docstring.
+// Below this, the review UI flags the assignment as uncertain rather than presenting
+// it as settled fact (product requirement: never claim perfect speaker identification).
+const LOW_CONFIDENCE_THRESHOLD = 0.5;
 
 function speakerColor(speakerId: string, speakers: SpeakerOut[]): string {
   const index = speakers.findIndex((s) => s.id === speakerId);
@@ -31,7 +40,46 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function TranscriptPanel({ utterances, speakers, currentTime, onSeek }: TranscriptPanelProps) {
+function SpeakerRoleChip({ callId, speaker }: { callId: string; speaker: SpeakerOut }) {
+  const [pendingRole, setPendingRole] = useState(speaker.role_code);
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: (newRoleCode: string) => correctSpeakerRole(callId, speaker.id, newRoleCode),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["call", callId] }),
+  });
+
+  const isUncertain = speaker.role_confidence !== null && speaker.role_confidence < LOW_CONFIDENCE_THRESHOLD;
+
+  return (
+    <div className="speaker-role-chip">
+      <span style={{ color: speakerColor(speaker.id, [speaker]) }}>
+        {speaker.display_name ?? speaker.role_code}
+      </span>
+      {isUncertain && !speaker.role_manually_corrected && (
+        <span className="uncertain-badge" title="Low-confidence role assignment — please verify">
+          ⚠ uncertain
+        </span>
+      )}
+      {speaker.role_manually_corrected && (
+        <span className="corrected-badge" title="Manually corrected by a reviewer">confirmed</span>
+      )}
+      <select value={pendingRole} onChange={(e) => setPendingRole(e.target.value)}>
+        {ROLE_OPTIONS.map((role) => (
+          <option key={role} value={role}>{role}</option>
+        ))}
+      </select>
+      <button
+        disabled={mutation.isPending || pendingRole === speaker.role_code}
+        onClick={() => mutation.mutate(pendingRole)}
+      >
+        Fix role
+      </button>
+    </div>
+  );
+}
+
+export function TranscriptPanel({ callId, utterances, speakers, currentTime, onSeek }: TranscriptPanelProps) {
   const [search, setSearch] = useState("");
 
   const activeUtteranceId = useMemo(() => {
@@ -45,6 +93,12 @@ export function TranscriptPanel({ utterances, speakers, currentTime, onSeek }: T
 
   return (
     <div className="transcript-panel">
+      <div className="speaker-role-summary">
+        {speakers.map((speaker) => (
+          <SpeakerRoleChip key={speaker.id} callId={callId} speaker={speaker} />
+        ))}
+      </div>
+
       <input
         placeholder="Search transcript..."
         value={search}

@@ -65,6 +65,7 @@ export function CallReviewPage() {
 
       <div className="review-layout">
         <TranscriptPanel
+          callId={call.id}
           utterances={call.utterances}
           speakers={call.speakers}
           currentTime={currentTime}

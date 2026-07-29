@@ -51,6 +51,8 @@ class SpeakerOut(BaseModel):
     diarization_label: str
     role_code: str
     display_name: str | None
+    role_confidence: float | None
+    role_manually_corrected: bool
 
     model_config = {"from_attributes": True}
 
@@ -148,3 +150,14 @@ class UtteranceCorrectionResponse(BaseModel):
     content: str
     speaker_id: uuid.UUID
     is_corrected: bool
+
+
+class SpeakerRoleCorrectionRequest(BaseModel):
+    new_role_code: str
+    reason: str | None = None
+
+
+class SpeakerRoleCorrectionResponse(BaseModel):
+    speaker_id: uuid.UUID
+    role_code: str
+    role_confidence: float

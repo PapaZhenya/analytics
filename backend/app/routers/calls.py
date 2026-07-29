@@ -8,9 +8,18 @@ from sqlalchemy.orm import Session
 
 from backend.app.db.session import get_db
 from backend.app.dependencies import get_current_user, require_permission
-from backend.app.models.calls import Call, CallProcessingStep, CallStatus, CallTag, Utterance, UtteranceCorrection
+from backend.app.models.calls import (
+    Call,
+    CallProcessingStep,
+    CallStatus,
+    CallTag,
+    Speaker,
+    SpeakerRole,
+    Utterance,
+    UtteranceCorrection,
+)
 from backend.app.models.collab import Comment
-from backend.app.models.org import User
+from backend.app.models.org import AuditLog, User
 from backend.app.models.qa import QAEvaluation
 from backend.app.schemas.calls import (
     CallDetailResponse,
@@ -23,6 +32,8 @@ from backend.app.schemas.calls import (
     ProcessingStepOut,
     QAEvaluationOut,
     SpeakerOut,
+    SpeakerRoleCorrectionRequest,
+    SpeakerRoleCorrectionResponse,
     UtteranceCorrectionRequest,
     UtteranceCorrectionResponse,
     UtteranceOut,
@@ -124,6 +135,8 @@ def get_call_detail(
         SpeakerOut(
             id=s.id, diarization_label=s.diarization_label, role_code=s.role.code,
             display_name=s.display_name,
+            role_confidence=float(s.role_confidence) if s.role_confidence is not None else None,
+            role_manually_corrected=s.role_corrected_by is not None,
         )
         for s in call.speakers
     ]
@@ -341,4 +354,55 @@ def correct_utterance(
         content=body.corrected_content or utterance.original_content,
         speaker_id=body.corrected_speaker_id or utterance.speaker_id,
         is_corrected=True,
+    )
+
+
+@router.post("/{call_id}/speakers/{speaker_id}/correct-role", response_model=SpeakerRoleCorrectionResponse)
+def correct_speaker_role(
+    call_id: uuid.UUID,
+    speaker_id: uuid.UUID,
+    body: SpeakerRoleCorrectionRequest,
+    user: User = Depends(require_permission("transcripts.correct")),
+    db: Session = Depends(get_db),
+) -> SpeakerRoleCorrectionResponse:
+    """Directly corrects which role a whole speaker was assigned (Agent vs Client),
+    rather than requiring a reviewer to fix every individual utterance's speaker
+    assignment by hand — for exactly the case where diarization correctly separated the
+    two voices but role classification (Speaker.role_confidence — see that field's
+    docstring) got the Agent/Client label backwards."""
+    speaker = db.get(Speaker, speaker_id)
+    if speaker is None or speaker.call_id != call_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Speaker not found")
+
+    new_role = db.query(SpeakerRole).filter(SpeakerRole.code == body.new_role_code).one_or_none()
+    if new_role is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown role code: {body.new_role_code!r}")
+
+    old_role_code = speaker.role.code
+    speaker.role_id = new_role.id
+    speaker.role_confidence = 1.0  # human-confirmed, not a heuristic tier anymore
+    speaker.role_corrected_by = user.id
+    speaker.role_corrected_at = datetime.now(timezone.utc)
+
+    db.add(
+        AuditLog(
+            id=uuid.uuid4(),
+            org_id=user.org_id,
+            user_id=user.id,
+            action="speaker_role_corrected",
+            entity_type="speaker",
+            entity_id=speaker.id,
+            audit_metadata={
+                "call_id": str(call_id),
+                "old_role": old_role_code,
+                "new_role": body.new_role_code,
+                "reason": body.reason,
+            },
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    db.commit()
+
+    return SpeakerRoleCorrectionResponse(
+        speaker_id=speaker.id, role_code=body.new_role_code, role_confidence=1.0
     )

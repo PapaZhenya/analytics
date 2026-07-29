@@ -20,6 +20,19 @@ class PipelineContext:
     temp_dir: str
     original_audio_path: str
 
+    # Populated by step_file_validation / step_channel_inspection (stages 1 and 4 of
+    # the required pipeline decomposition) and persisted onto the Call row itself
+    # (backend/app/models/calls.py) rather than only living in this in-memory context.
+    channel_count: int | None = None
+    is_separate_channel_recording: bool | None = None
+    model_versions: dict[str, str] = field(default_factory=dict)
+
+    # Set by step_classify_speaker_roles: whether LLMResultHandler's real classification
+    # validated (False) or it had to fall back to its first-speaker-is-CSR heuristic
+    # (True) — the honest signal behind Speaker.role_confidence (see that field's
+    # docstring for why this, not a fabricated probability).
+    role_assignment_used_fallback: bool | None = None
+
     enhanced_audio_path: str | None = None
     vocal_audio_path: str | None = None
     mono_audio_path: str | None = None

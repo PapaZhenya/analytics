@@ -8,6 +8,8 @@ from backend.app.models.calls import CallStatus
 # main.py's numbered steps (7.1-7.4, 17.1-17.2) are broken out individually here so each
 # gets its own call_processing_steps row / resumability checkpoint.
 STEP_NAMES: list[str] = [
+    "file_validation",
+    "channel_inspection",
     "dialogue_detection",
     "speech_enhancement",
     "vocal_separation",
@@ -35,6 +37,8 @@ STEP_SEQUENCE: dict[str, int] = {name: i for i, name in enumerate(STEP_NAMES)}
 
 # Which coarse calls.status a given fine-grained step belongs to, for the UI's status badge.
 STEP_TO_CALL_STATUS: dict[str, CallStatus] = {
+    "file_validation": CallStatus.preprocessing,
+    "channel_inspection": CallStatus.preprocessing,
     "dialogue_detection": CallStatus.preprocessing,
     "speech_enhancement": CallStatus.preprocessing,
     "vocal_separation": CallStatus.preprocessing,

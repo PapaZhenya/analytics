@@ -14,6 +14,13 @@ class Settings(BaseSettings):
     celery_broker_url: str | None = None
     celery_result_backend: str | None = None
     celery_gpu_queue: str = "pipeline_gpu"
+    # Long calls are an explicit design requirement (section 5 of the product spec) —
+    # these bound worst-case processing time so a pathologically long/corrupt-but-not-
+    # rejected recording can't hang a GPU worker indefinitely. Generous defaults (2h
+    # hard / 1h50m soft) since a real multi-hour call plus a large local LLM can
+    # legitimately take a while; tune per deployment.
+    pipeline_task_soft_time_limit_seconds: int = 60 * 110
+    pipeline_task_time_limit_seconds: int = 60 * 120
 
     # Auth
     jwt_secret_key: str = "change-me-in-.env"
