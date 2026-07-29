@@ -1,25 +1,21 @@
-import uuid
-from datetime import datetime, timezone
+"""Call lifecycle: upload, list, detail, processing status, reprocess/cancel.
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, status
-from fastapi.responses import StreamingResponse
+Audio streaming lives in routers/audio.py; transcript/speaker-role corrections live in
+routers/transcripts.py — split out to keep each router focused on one concern rather
+than one large file mixing call CRUD, storage-serving, and editorial actions.
+"""
+import uuid
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.app.db.session import get_db
-from backend.app.dependencies import get_current_user, require_permission
-from backend.app.models.calls import (
-    Call,
-    CallProcessingStep,
-    CallStatus,
-    CallTag,
-    Speaker,
-    SpeakerRole,
-    Utterance,
-    UtteranceCorrection,
-)
+from backend.app.dependencies import get_call_or_404, require_permission
+from backend.app.models.calls import Call, CallProcessingStep, CallStatus, CallTag, Utterance
 from backend.app.models.collab import Comment
-from backend.app.models.org import AuditLog, User
+from backend.app.models.org import User
 from backend.app.models.qa import QAEvaluation
 from backend.app.schemas.calls import (
     CallDetailResponse,
@@ -32,10 +28,6 @@ from backend.app.schemas.calls import (
     ProcessingStepOut,
     QAEvaluationOut,
     SpeakerOut,
-    SpeakerRoleCorrectionRequest,
-    SpeakerRoleCorrectionResponse,
-    UtteranceCorrectionRequest,
-    UtteranceCorrectionResponse,
     UtteranceOut,
 )
 from backend.app.services.call_service import (
@@ -46,16 +38,8 @@ from backend.app.services.call_service import (
     reprocess_call,
 )
 from backend.pipeline.steps_meta import STEP_NAMES
-from backend.pipeline.storage import get_storage
 
 router = APIRouter(prefix="/calls", tags=["calls"])
-
-
-def _get_call_or_404(db: Session, call_id: uuid.UUID) -> Call:
-    call = db.get(Call, call_id)
-    if call is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Call not found")
-    return call
 
 
 @router.post("", response_model=list[CallListItem], status_code=status.HTTP_201_CREATED)
@@ -129,7 +113,7 @@ def get_call_detail(
     user: User = Depends(require_permission("calls.view")),
     db: Session = Depends(get_db),
 ) -> CallDetailResponse:
-    call = _get_call_or_404(db, call_id)
+    call = get_call_or_404(db, call_id)
 
     speakers_out = [
         SpeakerOut(
@@ -227,7 +211,7 @@ def get_call_status(
     user: User = Depends(require_permission("calls.view")),
     db: Session = Depends(get_db),
 ) -> CallStatusResponse:
-    call = _get_call_or_404(db, call_id)
+    call = get_call_or_404(db, call_id)
     steps = (
         db.query(CallProcessingStep)
         .filter(CallProcessingStep.call_id == call.id)
@@ -251,53 +235,13 @@ def get_call_status(
     )
 
 
-@router.get("/{call_id}/audio")
-def stream_audio(
-    call_id: uuid.UUID,
-    request: Request,
-    user: User = Depends(require_permission("calls.view")),
-    db: Session = Depends(get_db),
-):
-    call = _get_call_or_404(db, call_id)
-    storage = get_storage()
-    file_size = storage.size(call.storage_path)
-
-    range_header = request.headers.get("range")
-    start, end = 0, file_size - 1
-    status_code = status.HTTP_200_OK
-    if range_header:
-        try:
-            range_value = range_header.replace("bytes=", "").split("-")
-            start = int(range_value[0]) if range_value[0] else 0
-            end = int(range_value[1]) if len(range_value) > 1 and range_value[1] else file_size - 1
-            status_code = status.HTTP_206_PARTIAL_CONTENT
-        except ValueError:
-            pass
-
-    content_length = end - start + 1
-    headers = {
-        "Content-Range": f"bytes {start}-{end}/{file_size}",
-        "Accept-Ranges": "bytes",
-        "Content-Length": str(content_length),
-    }
-    ext = call.original_filename.rsplit(".", 1)[-1].lower()
-    media_type = {"mp3": "audio/mpeg", "wav": "audio/wav", "flac": "audio/flac"}.get(ext, "application/octet-stream")
-
-    return StreamingResponse(
-        storage.stream(call.storage_path, start=start, end=end + 1),
-        status_code=status_code,
-        headers=headers,
-        media_type=media_type,
-    )
-
-
 @router.post("/{call_id}/reprocess", status_code=status.HTTP_202_ACCEPTED)
 def reprocess(
     call_id: uuid.UUID,
     user: User = Depends(require_permission("calls.reprocess")),
     db: Session = Depends(get_db),
 ) -> dict:
-    call = _get_call_or_404(db, call_id)
+    call = get_call_or_404(db, call_id)
     reprocess_call(db, call)
     return {"status": "queued"}
 
@@ -308,7 +252,7 @@ def cancel(
     user: User = Depends(require_permission("calls.cancel")),
     db: Session = Depends(get_db),
 ) -> dict:
-    call = _get_call_or_404(db, call_id)
+    call = get_call_or_404(db, call_id)
     cancelled = cancel_call(db, call)
     if not cancelled:
         raise HTTPException(
@@ -316,93 +260,3 @@ def cancel(
             "Call cannot be cancelled once processing has started (technically unsafe to interrupt).",
         )
     return {"status": "cancelled"}
-
-
-@router.post("/{call_id}/utterances/{utterance_id}/correct", response_model=UtteranceCorrectionResponse)
-def correct_utterance(
-    call_id: uuid.UUID,
-    utterance_id: uuid.UUID,
-    body: UtteranceCorrectionRequest,
-    user: User = Depends(require_permission("transcripts.correct")),
-    db: Session = Depends(get_db),
-) -> UtteranceCorrectionResponse:
-    utterance = db.get(Utterance, utterance_id)
-    if utterance is None or utterance.call_id != call_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Utterance not found")
-
-    if body.corrected_content is None and body.corrected_speaker_id is None:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "Provide corrected_content and/or corrected_speaker_id"
-        )
-
-    # Append-only revision — the original ASR output (utterance.original_content) is
-    # never mutated, satisfying "preserving the original machine transcript".
-    correction = UtteranceCorrection(
-        id=uuid.uuid4(),
-        utterance_id=utterance.id,
-        corrected_content=body.corrected_content,
-        corrected_speaker_id=body.corrected_speaker_id,
-        corrected_by=user.id,
-        reason=body.reason,
-        created_at=datetime.now(timezone.utc),
-    )
-    db.add(correction)
-    db.commit()
-
-    return UtteranceCorrectionResponse(
-        utterance_id=utterance.id,
-        content=body.corrected_content or utterance.original_content,
-        speaker_id=body.corrected_speaker_id or utterance.speaker_id,
-        is_corrected=True,
-    )
-
-
-@router.post("/{call_id}/speakers/{speaker_id}/correct-role", response_model=SpeakerRoleCorrectionResponse)
-def correct_speaker_role(
-    call_id: uuid.UUID,
-    speaker_id: uuid.UUID,
-    body: SpeakerRoleCorrectionRequest,
-    user: User = Depends(require_permission("transcripts.correct")),
-    db: Session = Depends(get_db),
-) -> SpeakerRoleCorrectionResponse:
-    """Directly corrects which role a whole speaker was assigned (Agent vs Client),
-    rather than requiring a reviewer to fix every individual utterance's speaker
-    assignment by hand — for exactly the case where diarization correctly separated the
-    two voices but role classification (Speaker.role_confidence — see that field's
-    docstring) got the Agent/Client label backwards."""
-    speaker = db.get(Speaker, speaker_id)
-    if speaker is None or speaker.call_id != call_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Speaker not found")
-
-    new_role = db.query(SpeakerRole).filter(SpeakerRole.code == body.new_role_code).one_or_none()
-    if new_role is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown role code: {body.new_role_code!r}")
-
-    old_role_code = speaker.role.code
-    speaker.role_id = new_role.id
-    speaker.role_confidence = 1.0  # human-confirmed, not a heuristic tier anymore
-    speaker.role_corrected_by = user.id
-    speaker.role_corrected_at = datetime.now(timezone.utc)
-
-    db.add(
-        AuditLog(
-            id=uuid.uuid4(),
-            org_id=user.org_id,
-            user_id=user.id,
-            action="speaker_role_corrected",
-            entity_type="speaker",
-            entity_id=speaker.id,
-            audit_metadata={
-                "call_id": str(call_id),
-                "old_role": old_role_code,
-                "new_role": body.new_role_code,
-                "reason": body.reason,
-            },
-            created_at=datetime.now(timezone.utc),
-        )
-    )
-    db.commit()
-
-    return SpeakerRoleCorrectionResponse(
-        speaker_id=speaker.id, role_code=body.new_role_code, role_confidence=1.0
-    )

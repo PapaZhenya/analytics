@@ -1,9 +1,20 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { isAxiosError } from "axios";
 import { listProjects } from "@/api/reference";
 import { uploadCalls } from "@/api/calls";
 import { UploadDropzone } from "@/components/UploadDropzone";
+
+function extractErrorMessage(err: unknown): string {
+  // The upload endpoint returns specific, actionable detail (e.g. "file.mp3: duplicate
+  // of existing call <id>", "unsupported file type") — surface it instead of a generic
+  // message that would hide exactly the information the user needs to fix the problem.
+  if (isAxiosError(err) && typeof err.response?.data?.detail === "string") {
+    return err.response.data.detail;
+  }
+  return "Upload failed";
+}
 
 interface PendingFile {
   file: File;
@@ -49,11 +60,10 @@ export function UploadPage() {
         prev.map((f) => (f.status === "uploading" ? { ...f, status: "done", progress: 100 } : f))
       );
     } catch (err) {
+      const message = extractErrorMessage(err);
       setPendingFiles((prev) =>
         prev.map((f) =>
-          f.status === "uploading"
-            ? { ...f, status: "error", error: "Upload failed" }
-            : f
+          f.status === "uploading" ? { ...f, status: "error", error: message } : f
         )
       );
     }

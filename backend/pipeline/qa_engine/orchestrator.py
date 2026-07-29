@@ -31,8 +31,39 @@ class UnsupportedRuleTypeError(Exception):
     pass
 
 
+def _clear_unreviewed_evaluation(db, call_id: uuid.UUID, scorecard_id: uuid.UUID) -> None:
+    """Idempotency for retries: if the qa_evaluation pipeline step previously started
+    and failed partway (e.g. a semantic evaluator call errored on criterion 5 of 10),
+    a naive retry would leave that partial QAEvaluation/QAFinding orphaned in the DB
+    while also inserting a second, complete one. Since this only ever removes
+    evaluations with `status == pending_review` AND zero review_actions logged against
+    any of their findings, it can never touch a result a human has actually looked at —
+    that's what "do not silently alter historical QA results" actually requires here:
+    protecting reviewed data, not freezing every unreviewed row forever."""
+    from backend.app.models.qa import ReviewAction
+
+    stale = (
+        db.query(QAEvaluation)
+        .filter(QAEvaluation.call_id == call_id, QAEvaluation.scorecard_id == scorecard_id)
+        .all()
+    )
+    for evaluation in stale:
+        has_review_activity = (
+            db.query(ReviewAction)
+            .join(QAFinding, ReviewAction.finding_id == QAFinding.id)
+            .filter(QAFinding.evaluation_id == evaluation.id)
+            .first()
+            is not None
+        )
+        if evaluation.status == EvaluationStatus.pending_review and not has_review_activity:
+            db.delete(evaluation)
+    db.flush()
+
+
 async def run_scorecard(db, call, scorecard: Scorecard) -> QAEvaluation:
     context = CallContext.load(db, call.id)
+
+    _clear_unreviewed_evaluation(db, call.id, scorecard.id)
 
     evaluation = QAEvaluation(
         id=uuid.uuid4(),

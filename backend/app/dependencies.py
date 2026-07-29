@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.db.session import get_db
+from backend.app.models.calls import Call
 from backend.app.models.org import Permission, RolePermission, User
 from backend.app.security import TokenType, decode_token
 
@@ -61,4 +62,13 @@ def require_permission(permission_code: str):
     return dependency
 
 
-__all__ = ["get_db", "get_current_user", "require_permission"]
+def get_call_or_404(db: Session, call_id: uuid.UUID) -> Call:
+    """Shared across routers/{calls,audio,transcripts}.py — previously duplicated
+    ad hoc in calls.py; centralized here instead of copy-pasted per file."""
+    call = db.get(Call, call_id)
+    if call is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Call not found")
+    return call
+
+
+__all__ = ["get_db", "get_current_user", "require_permission", "get_call_or_404"]

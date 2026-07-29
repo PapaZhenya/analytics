@@ -12,6 +12,12 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+# JWT_SECRET_KEY has no default in Settings (backend/app/config.py) — deliberately, so
+# a real deployment fails to start rather than silently signing tokens with a hardcoded
+# fallback. Tests need *some* value; this one is only ever used inside this test
+# process and is never a real deployment's secret.
+os.environ.setdefault("JWT_SECRET_KEY", "test-only-secret-never-used-outside-pytest")
+
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 
 requires_postgres = pytest.mark.skipif(

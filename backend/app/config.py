@@ -23,7 +23,13 @@ class Settings(BaseSettings):
     pipeline_task_time_limit_seconds: int = 60 * 120
 
     # Auth
-    jwt_secret_key: str = "change-me-in-.env"
+    # No default on purpose: a hardcoded fallback secret is a well-known vulnerability
+    # class (an app that silently starts and signs real JWTs with a secret published in
+    # its own source code) — this must come from the environment, and pydantic-settings
+    # will raise a clear startup error if JWT_SECRET_KEY isn't set, rather than the app
+    # quietly running insecurely. Generate with:
+    #   python -c "import secrets; print(secrets.token_urlsafe(64))"
+    jwt_secret_key: str
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 20
     refresh_token_expire_days: int = 14

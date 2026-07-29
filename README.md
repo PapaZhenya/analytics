@@ -30,6 +30,35 @@ please read the [CONTRIBUTING](.docs/documentation/CONTRIBUTING.md) first._
 
 ---
 
+### This fork: Call-Center QA Analytics Platform
+
+This fork (`feature/local-qa-platform`) adds a full browser-based QA platform
+(FastAPI + PostgreSQL + Celery/Redis backend, React frontend) on top of the audio
+pipeline documented below — auth, upload, background processing, and a call review
+screen with a synced audio player/transcript/QA findings. The pipeline itself
+(`src/`, `config/`) is unchanged; everything new lives under `backend/` and `frontend/`.
+
+**Quickstart:**
+
+```bash
+cp .env.example .env               # fill in JWT_SECRET_KEY, POSTGRES_PASSWORD (see comments)
+docker compose up --build          # starts postgres, redis, api, worker, frontend
+
+# One-time bootstrap (after the api container is healthy):
+docker compose exec api python -m backend.scripts.create_superuser \
+    --email you@company.com --password '...'
+docker compose exec api python -m backend.scripts.seed_example_scorecard
+```
+
+Then open `http://localhost:8080` and sign in. See `docs/project/WEB_PLATFORM.md` for
+what's implemented and verified vs. what still needs a real environment to exercise
+end-to-end, `docs/project/AUDIO_PIPELINE.md` for the pipeline's stage-by-stage
+breakdown and known limitations, and the other `docs/project/*.md` files for the full
+architecture. The rest of this README documents the original Callytics pipeline this
+platform is built on.
+
+---
+
 ### Table of Contents
 
 - [Prerequisites](#prerequisites)

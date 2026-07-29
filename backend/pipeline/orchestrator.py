@@ -31,6 +31,15 @@ from backend.app.models.calls import (
 )
 from backend.pipeline import steps as step_functions
 from backend.pipeline.context import PipelineContext
+from backend.pipeline.llm_schemas import (
+    ConflictResult,
+    ProfanityItem,
+    SentimentItem,
+    SummaryResult,
+    TopicResult,
+    parse_indexed_items,
+    parse_single,
+)
 from backend.pipeline.steps_meta import STEP_NAMES, STEP_SEQUENCE, STEP_TO_CALL_STATUS
 from backend.pipeline.storage import get_storage
 from backend.utils.cleanup import cleanup_temp_dir
@@ -199,14 +208,22 @@ def _persist_results(ctx: PipelineContext) -> None:
             db.flush()
             speaker_by_label[legacy_label] = speaker
 
-    sentiments = {s["index"]: s["sentiment"] for s in ctx.sentiment_results.get("sentiments", [])} \
-        if ctx.sentiment_results else {}
-    profanity = {p["index"]: p["profane"] for p in ctx.profanity_results.get("profanity", [])} \
-        if ctx.profanity_results else {}
+    # Every field below comes from the raw JSON an LLM returned (src/text/llm.py,
+    # unmodified) — validated item-by-item before use rather than trusted directly;
+    # a malformed entry is logged and dropped, not a crash or a silently-wrong value.
+    raw_sentiments = (ctx.sentiment_results or {}).get("sentiments", [])
+    raw_profanity = (ctx.profanity_results or {}).get("profanity", [])
+    sentiments = {
+        item.index: item.sentiment
+        for item in parse_indexed_items(raw_sentiments, SentimentItem, context="sentiment_analysis")
+    }
+    profanity = {
+        item.index: item.profane
+        for item in parse_indexed_items(raw_profanity, ProfanityItem, context="profanity_detection")
+    }
 
     for idx, item in enumerate(ssm):
         speaker = speaker_by_label[item["speaker"]]
-        sentiment_value = sentiments.get(idx)
         db.add(
             Utterance(
                 id=uuid.uuid4(),
@@ -216,8 +233,8 @@ def _persist_results(ctx: PipelineContext) -> None:
                 start_time=item["start_time"],
                 end_time=item["end_time"],
                 original_content=item["text"],
-                sentiment=Sentiment(sentiment_value) if sentiment_value in Sentiment.__members__ else None,
-                is_profane=bool(profanity.get(idx, False)),
+                sentiment=Sentiment(sentiments[idx]) if idx in sentiments else None,
+                is_profane=profanity.get(idx, False),
             )
         )
 
@@ -248,15 +265,19 @@ def _persist_results(ctx: PipelineContext) -> None:
             )
         )
 
+    summary = parse_single(ctx.summary_result, SummaryResult, context="summary")
+    conflict = parse_single(ctx.conflict_result, ConflictResult, context="conflict_detection")
+    topic = parse_single(ctx.topic_result, TopicResult, context="topic_detection")
+
     db.query(CallSummary).filter(CallSummary.call_id == call.id).delete(synchronize_session=False)
     db.add(
         CallSummary(
             id=uuid.uuid4(),
             call_id=call.id,
-            summary_text=(ctx.summary_result or {}).get("summary"),
-            conflict_detected=bool((ctx.conflict_result or {}).get("conflict", False)),
+            summary_text=summary.summary if summary else None,
+            conflict_detected=conflict.conflict if conflict else False,
             conflict_details=None,
-            topics={"topic": (ctx.topic_result or {}).get("topic", "Unknown")},
+            topics={"topic": topic.topic if topic else "Unknown"},
         )
     )
     db.commit()

@@ -72,19 +72,24 @@ that satisfies the requirements, not the most scalable one in the abstract.
   crash/restart resumability (JSON checkpoint per call + per-step DB status, so a killed
   worker resumes from the last succeeded step instead of reprocessing from scratch), and
   never deletes the original recording (only `.temp/` working files).
-- **Tests** (`backend/tests/`, pytest): **20 tests total.**
-  - **14 run and pass right now** without any external services: password/JWT
+- **Tests** (`backend/tests/`, pytest): **26 tests total.**
+  - **19 run and pass right now** without any external services: password/JWT
     round-trips (`test_security.py`), the QA engine's keyword evaluator + schema
-    rejection of malformed verdicts/out-of-range confidence (`test_qa_engine.py`), and
-    the structured-logging JSON formatter (`test_logging_config.py`).
-  - **6 require a real PostgreSQL instance** (native UUID/JSONB/ENUM types used
+    rejection of malformed verdicts/out-of-range confidence (`test_qa_engine.py`), the
+    structured-logging JSON formatter (`test_logging_config.py`), and validation of raw
+    LLM output — malformed sentiment/profanity/summary/conflict/topic items are dropped
+    with a logged reason rather than crashing or being trusted as-is
+    (`test_llm_schemas.py`).
+  - **7 require a real PostgreSQL instance** (native UUID/JSONB/ENUM types used
     throughout the schema aren't reproducible on SQLite): login/RBAC
     (`test_auth_and_permissions.py`), upload checksum-dedup
-    (`test_upload_dedup.py`), and orchestrator crash-resumability
-    (`test_idempotency.py`). These are correctly collected and **skip cleanly** (not
-    fail) without `TEST_DATABASE_URL` set — this sandbox has no Postgres/Docker
-    available to run them against. Set `TEST_DATABASE_URL` to a disposable Postgres DB
-    (e.g. the docker-compose `postgres` service) to run the full 20.
+    (`test_upload_dedup.py`), orchestrator crash-resumability
+    (`test_idempotency.py`), and QA-evaluation retry idempotency
+    (`test_qa_evaluation_idempotency.py`). These are correctly collected and **skip
+    cleanly** (not fail) without `TEST_DATABASE_URL` set — this sandbox has no
+    Postgres/Docker available to run them against. Set `TEST_DATABASE_URL` to a
+    disposable Postgres DB (e.g. the docker-compose `postgres` service) to run the
+    full 26.
   - **Not run in this sandbox at all**: an actual pipeline run against a real audio file
     needs the full ML stack (torch, nemo_toolkit, faster-whisper, demucs, pyannote.audio,
     ctc-forced-aligner, MPSENet — multi-GB, GPU-oriented). The orchestrator/steps code was
@@ -175,6 +180,56 @@ analytics service.
 3. **A real pipeline run** against one of `.data/example/*.mp3` through the actual worker
    container (GPU-equipped), confirming the full call → transcript → QA finding → review
    loop end to end.
+
+## Engineering quality audit (section 6 of the product spec)
+
+Section 6 is a checklist of engineering-discipline rules for a long-lived commercial
+system. Auditing the already-built Phase 1 code against it found four real violations
+— fixed, not just checked off:
+
+- **Insecure default secret.** `Settings.jwt_secret_key` had a hardcoded fallback
+  (`"change-me-in-.env"`). An operator who forgot to set `JWT_SECRET_KEY` would get a
+  fully working app silently signing real JWTs with a secret published in this repo's
+  own source. Fixed: the field now has no default — `pydantic-settings` raises a clear
+  startup error if it's missing, fail-closed instead of fail-open. (Tests set a
+  test-only value via `backend/tests/conftest.py`; this is never a real deployment's
+  secret.)
+- **Unvalidated AI output reaching persistence.** The QA engine's `CriterionResult`
+  schema (see `MODULES.md`) already enforced "never trust raw AI output," but the
+  older sentiment/profanity/summary/conflict/topic steps (reusing `LLMOrchestrator`
+  unmodified) only had ad hoc `.get()` defensive coding — a single malformed item
+  (e.g. a sentiment entry missing `"index"`) would raise an unhandled `KeyError` and
+  crash the whole `persist_results` step. Fixed: `backend/pipeline/llm_schemas.py`
+  validates every LLM-returned item independently (Pydantic); a bad item is logged and
+  dropped, not a crash, and not silently trusted.
+- **Non-idempotent QA re-evaluation.** `qa_engine/orchestrator.py::run_scorecard` had
+  no retry protection: if the `qa_evaluation` pipeline step failed partway through and
+  Celery retried it, the partial `QAEvaluation`/`QAFinding` rows from the failed attempt
+  were orphaned in the DB while a second, complete set was inserted alongside them.
+  Fixed: `_clear_unreviewed_evaluation` removes a prior unreviewed evaluation for the
+  same call+scorecard before creating a new one — but **only** if it has zero
+  `review_actions` logged against it, so a result a human has actually looked at can
+  never be silently replaced (the actual substance of "do not silently alter historical
+  QA results").
+- **One large router file mixing concerns.** `routers/calls.py` had grown to ~400 lines
+  spanning call-lifecycle CRUD, audio streaming, and transcript/speaker-role correction
+  — three genuinely different responsibilities. Split into `routers/calls.py` (call
+  lifecycle), `routers/audio.py` (streaming), `routers/transcripts.py` (corrections);
+  the shared `get_call_or_404` helper moved to `dependencies.py` instead of being
+  copy-pasted across the three (also resolves a "do not create duplicate
+  abstractions" instance).
+
+Also surfaced and fixed in the frontend: `UploadPage`'s error handler discarded the
+backend's actual error detail (e.g. "duplicate of existing call") in favor of a generic
+"Upload failed" string — silently hiding exactly the information a user needs to fix
+the problem. Now surfaces the real `detail` from the API response.
+
+Everything else on the section 6 checklist was already satisfied by the existing
+design and confirmed by direct inspection rather than assumed: no giant classes,
+scorecards are DB-driven data (not hardcoded Python), migrations exist for every schema
+change (0001-0004), config is env-driven throughout, and the record-then-re-raise
+pattern used for every broad `except Exception` in the pipeline (`orchestrator.py`,
+`steps.py`, `process_call.py`) logs/records the failure rather than swallowing it.
 
 ## Audit fixes applied during this build
 

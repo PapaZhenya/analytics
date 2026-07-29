@@ -9,7 +9,18 @@ from slowapi.errors import RateLimitExceeded
 from backend.app.config import get_settings
 from backend.app.logging_config import configure_logging
 from backend.app.rate_limit import limiter
-from backend.app.routers import auth, calls, comments, findings, health, projects, scorecards, teams
+from backend.app.routers import (
+    audio,
+    auth,
+    calls,
+    comments,
+    findings,
+    health,
+    projects,
+    scorecards,
+    teams,
+    transcripts,
+)
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -49,6 +60,8 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix="/api/v1")
     app.include_router(auth.router, prefix="/api/v1")
     app.include_router(calls.router, prefix="/api/v1")
+    app.include_router(audio.router, prefix="/api/v1")
+    app.include_router(transcripts.router, prefix="/api/v1")
     app.include_router(findings.router, prefix="/api/v1")
     app.include_router(comments.router, prefix="/api/v1")
     app.include_router(scorecards.router, prefix="/api/v1")
