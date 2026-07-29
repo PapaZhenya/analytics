@@ -1,0 +1,64 @@
+import uuid
+from collections.abc import Generator
+
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from backend.app.db.session import get_db
+from backend.app.models.org import Permission, RolePermission, User
+from backend.app.security import TokenType, decode_token
+
+_bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+    if credentials is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
+
+    payload = decode_token(credentials.credentials, expected_type=TokenType.access)
+    if payload is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
+
+    user = db.get(User, payload.user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found or inactive")
+
+    return user
+
+
+def _user_has_permission(db: Session, user: User, permission_code: str) -> bool:
+    stmt = (
+        select(Permission.id)
+        .join(RolePermission, RolePermission.permission_id == Permission.id)
+        .where(RolePermission.role_id == user.role_id, Permission.code == permission_code)
+    )
+    return db.execute(stmt).first() is not None
+
+
+def require_permission(permission_code: str):
+    """FastAPI dependency factory enforcing RBAC server-side.
+
+    Every router endpoint that touches call/finding/comment/scorecard data must depend on
+    this — the frontend's ProtectedRoute/hidden buttons are UX only and enforce nothing.
+    """
+
+    def dependency(
+        user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> User:
+        if not _user_has_permission(db, user, permission_code):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                f"Missing required permission: {permission_code}",
+            )
+        return user
+
+    return dependency
+
+
+__all__ = ["get_db", "get_current_user", "require_permission"]

@@ -260,6 +260,13 @@ class AzureOpenAIModel(LanguageModel):
     """
     Azure OpenAI model integration.
 
+    BROKEN under the pinned openai==1.57.0 (requirements.txt): this class calls the
+    pre-1.0 openai SDK API (`openai.api_type`, `openai.ChatCompletion.create`), which no
+    longer exists in openai>=1.0 — that SDK version uses client classes instead (see
+    OpenAIModel above, or `openai.AzureOpenAI` for the Azure equivalent). Do not select
+    "azure_openai" as a model_id until this class is rewritten against the current SDK.
+    Not registered in ModelFactory usage anywhere in this repo's config/config.yaml.
+
     Parameters
     ----------
     config : dict

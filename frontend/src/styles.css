@@ -1,0 +1,189 @@
+:root {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  background: #f8fafc;
+}
+
+.login-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 2rem;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  min-width: 320px;
+}
+
+.login-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.875rem;
+}
+
+.error-text {
+  color: #ef4444;
+  font-size: 0.875rem;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+}
+
+.filters {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0 1.5rem 1rem;
+  flex-wrap: wrap;
+}
+
+.call-list-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.call-list-table th,
+.call-list-table td {
+  padding: 0.5rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.status-badge {
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.pagination {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  padding: 1rem 1.5rem;
+}
+
+.upload-dropzone {
+  border: 2px dashed #94a3b8;
+  border-radius: 8px;
+  padding: 3rem;
+  text-align: center;
+  cursor: pointer;
+  margin: 1rem 1.5rem;
+}
+
+.upload-dropzone.dragging {
+  border-color: #3b82f6;
+  background: #eff6ff;
+}
+
+.review-layout {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 1rem;
+  padding: 0 1.5rem 1.5rem;
+}
+
+.transcript-segment {
+  padding: 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.transcript-segment.active {
+  background: #dbeafe;
+}
+
+.transcript-segment.search-match {
+  outline: 1px solid #eab308;
+}
+
+.speaker-label {
+  font-weight: 700;
+  margin-right: 0.5rem;
+}
+
+.timestamp {
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
+.finding-card {
+  background: white;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  border-left: 4px solid #94a3b8;
+}
+
+.finding-card.verdict-pass {
+  border-left-color: #22c55e;
+}
+
+.finding-card.verdict-fail {
+  border-left-color: #ef4444;
+}
+
+.evidence-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  background: #f1f5f9;
+  margin-bottom: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.evidence-violation {
+  background: #fee2e2;
+}
+
+.evidence-positive {
+  background: #dcfce7;
+}
+
+.jump-to-audio {
+  background: none;
+  border: none;
+  color: #3b82f6;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.processing-banner {
+  margin: 0 1.5rem 1rem;
+  padding: 0.75rem;
+  background: #eff6ff;
+  border-radius: 6px;
+}
+
+.error-banner {
+  margin: 0 1.5rem 1rem;
+  padding: 0.75rem;
+  background: #fee2e2;
+  border-radius: 6px;
+}
+
+.corrected-badge {
+  font-size: 0.7rem;
+  background: #fef3c7;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  margin-left: 0.5rem;
+}

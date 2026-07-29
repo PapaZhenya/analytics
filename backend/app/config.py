@@ -1,0 +1,51 @@
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    # Database
+    database_url: str = "postgresql+psycopg://callytics:callytics@localhost:5432/callytics"
+
+    # Redis / Celery
+    redis_url: str = "redis://localhost:6379/0"
+    celery_broker_url: str | None = None
+    celery_result_backend: str | None = None
+    celery_gpu_queue: str = "pipeline_gpu"
+
+    # Auth
+    jwt_secret_key: str = "change-me-in-.env"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 20
+    refresh_token_expire_days: int = 14
+
+    # CORS
+    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:8080"]
+
+    # Storage
+    storage_backend: str = "local"  # "local" | "s3" (future)
+    storage_local_path: str = "./.data/audio"
+
+    # Pipeline config paths (existing repo)
+    pipeline_config_path: str = "config/config.yaml"
+    pipeline_prompt_path: str = "config/prompt.yaml"
+    pipeline_nemo_config_path: str = "config/nemo/diar_infer_telephonic.yaml"
+    pipeline_temp_dir: str = ".temp"
+
+    # Rate limiting
+    login_rate_limit: str = "10/minute"
+
+    @property
+    def celery_broker(self) -> str:
+        return self.celery_broker_url or self.redis_url
+
+    @property
+    def celery_backend(self) -> str:
+        return self.celery_result_backend or self.redis_url
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

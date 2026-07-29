@@ -1,0 +1,23 @@
+# Base image already ships torch==2.5.1 + matching CUDA/cuDNN, avoiding a second huge
+# torch download/build on top of a generic CUDA runtime image.
+FROM pytorch/pytorch:2.5.1-cuda12.1-cudnn9-runtime
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg libsndfile1 git gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt ./
+COPY backend/requirements-base.txt backend/requirements-worker.txt ./backend/
+RUN pip install --no-cache-dir -r backend/requirements-worker.txt
+
+COPY backend ./backend
+COPY src ./src
+COPY config ./config
+
+ENV PYTHONPATH=/app
+# Match config/config.yaml's runtime.device — override to "cpu" for a CPU-only deployment.
+ENV NVIDIA_VISIBLE_DEVICES=all
+
+CMD ["celery", "-A", "backend.tasks.celery_app", "worker", "-Q", "pipeline_gpu", "--concurrency=1", "--loglevel=info"]

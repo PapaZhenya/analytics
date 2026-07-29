@@ -3,6 +3,17 @@
 .temp
 .agile
 .data/input
+.data/audio
 
 # Extension
 *.env
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+backend/.venv/
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
