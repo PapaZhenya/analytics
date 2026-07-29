@@ -3,6 +3,7 @@ import time
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
@@ -40,6 +41,25 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def reject_oversized_uploads(request: Request, call_next):
+        # First layer of file-size enforcement: an honest Content-Length header is
+        # rejected before the body is even read. A client that lies about
+        # Content-Length and streams more anyway isn't stopped by this — that's what
+        # the reverse-proxy-level limit (nginx client_max_body_size, see
+        # frontend/nginx.conf) and the post-save check in call_service.py are for.
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                if int(content_length) > settings.max_upload_size_bytes:
+                    return JSONResponse(
+                        status_code=413,
+                        content={"detail": f"Request body exceeds the {settings.max_upload_size_bytes} byte limit."},
+                    )
+            except ValueError:
+                pass
+        return await call_next(request)
 
     @app.middleware("http")
     async def log_requests(request: Request, call_next):

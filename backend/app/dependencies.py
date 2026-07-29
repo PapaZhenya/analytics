@@ -62,11 +62,20 @@ def require_permission(permission_code: str):
     return dependency
 
 
-def get_call_or_404(db: Session, call_id: uuid.UUID) -> Call:
+def get_call_or_404(db: Session, call_id: uuid.UUID, org_id: uuid.UUID) -> Call:
     """Shared across routers/{calls,audio,transcripts}.py — previously duplicated
-    ad hoc in calls.py; centralized here instead of copy-pasted per file."""
+    ad hoc in calls.py; centralized here instead of copy-pasted per file.
+
+    Requires `org_id` and enforces it: a call belonging to a different organization
+    404s exactly like a nonexistent one (never 403) — a 403 would confirm the call ID
+    exists in someone else's org, which is itself information disclosure across a
+    tenant boundary. This is real defense-in-depth even in the current single-org
+    deployment (every Call row already carries org_id) — schema and enforcement are
+    ready together for whenever multi-tenancy is actually turned on, rather than the
+    schema alone being ready and the enforcement being added later under pressure.
+    """
     call = db.get(Call, call_id)
-    if call is None:
+    if call is None or call.org_id != org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Call not found")
     return call
 

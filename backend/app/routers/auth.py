@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -22,6 +23,7 @@ from backend.app.security import (
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 REFRESH_COOKIE_NAME = "refresh_token"
 
@@ -61,6 +63,29 @@ def login(
     user = db.execute(select(User).where(User.email == body.email)).scalar_one_or_none()
 
     if user is None or not user.is_active or not verify_password(body.password, user.password_hash):
+        # Logged (structured, not printed) for brute-force/account-enumeration
+        # monitoring — the email is intentionally the only PII in this line, not the
+        # attempted password. If the account exists, this is also written to that
+        # org's audit_log; a nonexistent email has no org to attach an audit row to,
+        # so it's log-only.
+        logger.warning(
+            "Failed login attempt",
+            extra={"attempted_email": body.email, "client_ip": request.client.host if request.client else None},
+        )
+        if user is not None:
+            db.add(
+                AuditLog(
+                    id=uuid.uuid4(),
+                    org_id=user.org_id,
+                    user_id=user.id,
+                    action="login_failed",
+                    entity_type="user",
+                    entity_id=user.id,
+                    audit_metadata={},
+                    created_at=datetime.now(timezone.utc),
+                )
+            )
+            db.commit()
         # Same error for "no such user" and "wrong password" — do not leak which one.
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
 

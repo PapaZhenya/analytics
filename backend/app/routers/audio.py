@@ -2,7 +2,7 @@
 (range-request handling over AudioStorage), distinct from call-lifecycle CRUD."""
 import uuid
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -21,7 +21,13 @@ def stream_audio(
     user: User = Depends(require_permission("calls.view")),
     db: Session = Depends(get_db),
 ):
-    call = get_call_or_404(db, call_id)
+    call = get_call_or_404(db, call_id, user.org_id)
+    if call.deleted_at is not None:
+        # Audio was purged per retention policy (backend/scripts/purge_expired_calls.py)
+        # — the call's transcript/QA history is still fully available via
+        # GET /calls/{id}, only the recording itself is gone. 410 Gone, not 404: the
+        # call is real and known, the resource just no longer exists.
+        raise HTTPException(status.HTTP_410_GONE, "This call's audio has been purged per retention policy.")
     storage = get_storage()
     file_size = storage.size(call.storage_path)
 

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from backend.app.db.session import get_db
-from backend.app.dependencies import require_permission
+from backend.app.dependencies import get_call_or_404, require_permission
 from backend.app.models.calls import Speaker, SpeakerRole, Utterance, UtteranceCorrection
 from backend.app.models.org import AuditLog, User
 from backend.app.schemas.calls import (
@@ -30,6 +30,7 @@ def correct_utterance(
     user: User = Depends(require_permission("transcripts.correct")),
     db: Session = Depends(get_db),
 ) -> UtteranceCorrectionResponse:
+    get_call_or_404(db, call_id, user.org_id)  # 404s (not 403) across an org boundary
     utterance = db.get(Utterance, utterance_id)
     if utterance is None or utterance.call_id != call_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Utterance not found")
@@ -74,6 +75,7 @@ def correct_speaker_role(
     assignment by hand — for exactly the case where diarization correctly separated the
     two voices but role classification (Speaker.role_confidence — see that field's
     docstring) got the Agent/Client label backwards."""
+    get_call_or_404(db, call_id, user.org_id)
     speaker = db.get(Speaker, speaker_id)
     if speaker is None or speaker.call_id != call_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Speaker not found")
@@ -127,6 +129,7 @@ def get_utterance_correction_history(
     visible via GET /calls/{id}); this is purely the append-only revision chain on top
     of it, so 'transcript revisions' (section 8) are explainable, not just the latest
     edit."""
+    get_call_or_404(db, call_id, user.org_id)
     utterance = db.get(Utterance, utterance_id)
     if utterance is None or utterance.call_id != call_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Utterance not found")

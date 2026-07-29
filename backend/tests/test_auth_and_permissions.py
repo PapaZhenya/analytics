@@ -85,3 +85,34 @@ def test_viewer_role_cannot_upload_calls(db_session, seed_reference_data):
         files={"files": ("test.mp3", b"fake-audio-bytes", "audio/mpeg")},
     )
     assert response.status_code == 403
+
+
+@requires_postgres
+def test_failed_login_for_existing_user_is_audit_logged(db_session, seed_reference_data):
+    """Section 9 requires audit logging; failed logins matter most for detecting
+    brute-force/credential-stuffing attempts, not just successful ones."""
+    from backend.app.models.org import AuditLog, User
+    from backend.app.security import hash_password
+
+    org = seed_reference_data["org"]
+    role = seed_reference_data["roles"]["qa_reviewer"]
+    user = User(
+        id=uuid.uuid4(), org_id=org.id, email="audit-target@example.com",
+        password_hash=hash_password("correct-password"), full_name="Audit Target", role_id=role.id,
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    client = _make_client(db_session)
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "audit-target@example.com", "password": "wrong-password"},
+    )
+    assert response.status_code == 401
+
+    entries = (
+        db_session.query(AuditLog)
+        .filter(AuditLog.action == "login_failed", AuditLog.user_id == user.id)
+        .all()
+    )
+    assert len(entries) == 1

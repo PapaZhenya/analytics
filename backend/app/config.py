@@ -43,6 +43,25 @@ class Settings(BaseSettings):
     storage_s3_bucket: str | None = None
     storage_s3_endpoint_url: str | None = None  # set for MinIO/other S3-compatible; leave unset for real AWS S3
     storage_s3_region: str = "us-east-1"
+    # Enforced two ways: an early Content-Length check (app/main.py's
+    # reject_oversized_uploads middleware, rejects an honest oversized request before
+    # the body is even read) and a post-save size check (call_service.py, catches a
+    # missing/wrong Content-Length). Neither stops a client that lies about
+    # Content-Length and streams more than it declared — that needs a reverse-proxy-
+    # level limit (e.g. nginx client_max_body_size). The docker-compose.yml in this repo
+    # exposes the api service directly with no reverse proxy in front of it, so that
+    # outer layer does NOT currently exist here — add one (frontend/nginx.conf's nginx
+    # only serves the SPA today, it doesn't proxy /api) before relying on this app-level
+    # check as the sole defense in a hostile-network production deployment.
+    max_upload_size_bytes: int = 500 * 1024 * 1024  # 500 MB — generous for a call recording
+
+    # Retention: Call.retention_expires_at is set at upload time to uploaded_at + this
+    # many days. backend/scripts/purge_expired_calls.py is the (manually/cron-invoked)
+    # enforcement — see that script's docstring for why this isn't yet an automatic
+    # Celery Beat schedule. None disables retention entirely (calls are never flagged
+    # for deletion) — that is the current default, since a data-retention *duration* is
+    # a business/compliance decision this platform can't default on its own behalf.
+    default_retention_days: int | None = None
 
     # Pipeline config paths (existing repo)
     pipeline_config_path: str = "config/config.yaml"

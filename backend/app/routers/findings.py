@@ -6,8 +6,9 @@ from sqlalchemy.orm import Session
 
 from backend.app.db.session import get_db
 from backend.app.dependencies import require_permission
+from backend.app.models.calls import Call
 from backend.app.models.org import User
-from backend.app.models.qa import QAFinding, QAFindingEvidence, ReviewAction
+from backend.app.models.qa import QAEvaluation, QAFinding, QAFindingEvidence, ReviewAction
 from backend.app.schemas.findings import (
     ReviewActionHistoryItem,
     ReviewActionRequest,
@@ -19,8 +20,17 @@ router = APIRouter(prefix="/findings", tags=["findings"])
 _REQUIRES_NEW_VERDICT = {"reject", "correct"}
 
 
-def _get_finding_or_404(db: Session, finding_id: uuid.UUID) -> QAFinding:
-    finding = db.get(QAFinding, finding_id)
+def _get_finding_or_404(db: Session, finding_id: uuid.UUID, org_id: uuid.UUID) -> QAFinding:
+    """A finding's org isn't a column on QAFinding itself — it's reached via
+    evaluation -> call.org_id — so this is a join rather than a plain db.get(), same
+    org-boundary enforcement (404, never 403) as backend/app/dependencies.py::get_call_or_404."""
+    finding = (
+        db.query(QAFinding)
+        .join(QAEvaluation, QAFinding.evaluation_id == QAEvaluation.id)
+        .join(Call, QAEvaluation.call_id == Call.id)
+        .filter(QAFinding.id == finding_id, Call.org_id == org_id)
+        .one_or_none()
+    )
     if finding is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Finding not found")
     return finding
@@ -33,7 +43,7 @@ def review_finding(
     user: User = Depends(require_permission("calls.review")),
     db: Session = Depends(get_db),
 ) -> ReviewActionResponse:
-    finding = _get_finding_or_404(db, finding_id)
+    finding = _get_finding_or_404(db, finding_id, user.org_id)
     now = datetime.now(timezone.utc)
     previous_verdict = finding.current_verdict
 
@@ -123,7 +133,7 @@ def get_finding_history(
     ever performed, in order, each with who did it and when. Answers 'a manager must be
     able to determine ... whether a person changed it, who changed it and when' for the
     complete history, not just the finding's current state."""
-    _get_finding_or_404(db, finding_id)
+    _get_finding_or_404(db, finding_id, user.org_id)
     return (
         db.query(ReviewAction)
         .filter(ReviewAction.finding_id == finding_id)

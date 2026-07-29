@@ -2,6 +2,7 @@
 import re
 import json
 import asyncio
+import logging
 from typing import Annotated, Optional, Dict, Any, List
 
 # Related third-party imports
@@ -146,7 +147,13 @@ class LLMOrchestrator:
             messages=messages,
             max_new_tokens=10000,
         )
-        print(response)
+        # NOTE: deliberately not logged/printed here. `response` is derived directly
+        # from customer-conversation content (it's the LLM's answer about this call's
+        # transcript) — printing it unconditionally would put conversation content into
+        # stdout/container logs on every single call processed, contradicting the
+        # platform's privacy-aware-logging requirement and its local-first data
+        # handling premise. If you need to inspect a response while debugging, do it
+        # with a debugger or a temporary print, not a permanent one.
 
         dict_obj = self.extract_json(response)
         if dict_obj:
@@ -297,8 +304,13 @@ class LLMResultHandler:
         Final SSM: [{'speaker': 'CSR', 'text': 'Hello!'}, {'speaker': 'Customer', 'text': 'Hi!'}]
         LLM Result: {'Customer': 'Speaker 1', 'CSR': 'Speaker 2'}
         """
-        print("Final SSM:", ssm)
-        print("LLM Result:", llm_result)
+        # Not printed unconditionally: `ssm` is the full call transcript — printing it
+        # would put customer-conversation content into stdout/container logs on every
+        # call this is invoked for. Not currently called anywhere in the web platform's
+        # pipeline (backend/pipeline/steps.py only calls validate_and_fallback), but this
+        # is a public method other callers could still reach.
+        logging.getLogger(__name__).debug("Final SSM: %s", ssm)
+        logging.getLogger(__name__).debug("LLM Result: %s", llm_result)
 
 
 if __name__ == "__main__":

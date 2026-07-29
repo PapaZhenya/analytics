@@ -72,7 +72,7 @@ that satisfies the requirements, not the most scalable one in the abstract.
   crash/restart resumability (JSON checkpoint per call + per-step DB status, so a killed
   worker resumes from the last succeeded step instead of reprocessing from scratch), and
   never deletes the original recording (only `.temp/` working files).
-- **Tests** (`backend/tests/`, pytest): **28 tests total.**
+- **Tests** (`backend/tests/`, pytest): **31 tests total.**
   - **19 run and pass right now** without any external services: password/JWT
     round-trips (`test_security.py`), the QA engine's keyword evaluator + schema
     rejection of malformed verdicts/out-of-range confidence (`test_qa_engine.py`), the
@@ -80,17 +80,18 @@ that satisfies the requirements, not the most scalable one in the abstract.
     LLM output — malformed sentiment/profanity/summary/conflict/topic items are dropped
     with a logged reason rather than crashing or being trusted as-is
     (`test_llm_schemas.py`).
-  - **9 require a real PostgreSQL instance** (native UUID/JSONB/ENUM types used
-    throughout the schema aren't reproducible on SQLite): login/RBAC
-    (`test_auth_and_permissions.py`), upload checksum-dedup
-    (`test_upload_dedup.py`), orchestrator crash-resumability
+  - **12 require a real PostgreSQL instance** (native UUID/JSONB/ENUM types used
+    throughout the schema aren't reproducible on SQLite): login/RBAC and failed-login
+    audit logging (`test_auth_and_permissions.py`), upload checksum-dedup/file-type/
+    file-size rejection (`test_upload_dedup.py`), orchestrator crash-resumability
     (`test_idempotency.py`), QA-evaluation retry idempotency
-    (`test_qa_evaluation_idempotency.py`), and the two explainability-history endpoints
-    end to end through the actual API (`test_explainability_history.py`). These are
-    correctly collected and **skip cleanly** (not fail) without `TEST_DATABASE_URL`
-    set — this sandbox has no Postgres/Docker available to run them against. Set
-    `TEST_DATABASE_URL` to a disposable Postgres DB (e.g. the docker-compose
-    `postgres` service) to run the full 28.
+    (`test_qa_evaluation_idempotency.py`), the two explainability-history endpoints end
+    to end through the actual API (`test_explainability_history.py`), and cross-org
+    access rejection (`test_org_isolation.py`). These are correctly collected and
+    **skip cleanly** (not fail) without `TEST_DATABASE_URL` set — this sandbox has no
+    Postgres/Docker available to run them against. Set `TEST_DATABASE_URL` to a
+    disposable Postgres DB (e.g. the docker-compose `postgres` service) to run the
+    full 31.
   - **Not run in this sandbox at all**: an actual pipeline run against a real audio file
     needs the full ML stack (torch, nemo_toolkit, faster-whisper, demucs, pyannote.audio,
     ctc-forced-aligner, MPSENet — multi-GB, GPU-oriented). The orchestrator/steps code was

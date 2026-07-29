@@ -7,7 +7,7 @@ than one large file mixing call CRUD, storage-serving, and editorial actions.
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -30,8 +30,10 @@ from backend.app.schemas.calls import (
     SpeakerOut,
     UtteranceOut,
 )
+from backend.app.rate_limit import limiter
 from backend.app.services.call_service import (
     DuplicateUploadError,
+    FileTooLargeError,
     UnsupportedFileTypeError,
     cancel_call,
     create_call_from_upload,
@@ -43,7 +45,9 @@ router = APIRouter(prefix="/calls", tags=["calls"])
 
 
 @router.post("", response_model=list[CallListItem], status_code=status.HTTP_201_CREATED)
+@limiter.limit("30/minute")
 def upload_calls(
+    request: Request,
     project_id: uuid.UUID,
     agent_id: uuid.UUID | None = None,
     files: list[UploadFile] = ...,
@@ -60,6 +64,8 @@ def upload_calls(
         except DuplicateUploadError as exc:
             errors.append(f"{upload.filename}: duplicate of existing call {exc.existing_call.id}")
         except UnsupportedFileTypeError as exc:
+            errors.append(f"{upload.filename}: {exc}")
+        except FileTooLargeError as exc:
             errors.append(f"{upload.filename}: {exc}")
 
     if not created and errors:
@@ -113,7 +119,7 @@ def get_call_detail(
     user: User = Depends(require_permission("calls.view")),
     db: Session = Depends(get_db),
 ) -> CallDetailResponse:
-    call = get_call_or_404(db, call_id)
+    call = get_call_or_404(db, call_id, user.org_id)
 
     speakers_out = [
         SpeakerOut(
@@ -223,7 +229,7 @@ def get_call_status(
     user: User = Depends(require_permission("calls.view")),
     db: Session = Depends(get_db),
 ) -> CallStatusResponse:
-    call = get_call_or_404(db, call_id)
+    call = get_call_or_404(db, call_id, user.org_id)
     steps = (
         db.query(CallProcessingStep)
         .filter(CallProcessingStep.call_id == call.id)
@@ -253,8 +259,8 @@ def reprocess(
     user: User = Depends(require_permission("calls.reprocess")),
     db: Session = Depends(get_db),
 ) -> dict:
-    call = get_call_or_404(db, call_id)
-    reprocess_call(db, call)
+    call = get_call_or_404(db, call_id, user.org_id)
+    reprocess_call(db, call, user)
     return {"status": "queued"}
 
 
@@ -264,8 +270,8 @@ def cancel(
     user: User = Depends(require_permission("calls.cancel")),
     db: Session = Depends(get_db),
 ) -> dict:
-    call = get_call_or_404(db, call_id)
-    cancelled = cancel_call(db, call)
+    call = get_call_or_404(db, call_id, user.org_id)
+    cancelled = cancel_call(db, call, user)
     if not cancelled:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
